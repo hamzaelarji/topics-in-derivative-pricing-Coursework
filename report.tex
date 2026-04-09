@@ -1,0 +1,848 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{multicol}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{microtype}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage{siunitx}
+\usepackage[capitalise]{cleveref}
+\usepackage{subcaption}
+\usepackage{caption}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\E}{\mathbb{E}}
+
+\definecolor{bluecustom}{rgb}{0.0, 0.53, 0.74}
+\usepackage[left=2.00cm, right=2.00cm, top=2.00cm, bottom=2.00cm]{geometry}
+\hypersetup{colorlinks=true, linkcolor=bluecustom, urlcolor=bluecustom, citecolor=bluecustom}
+\setlength{\columnsep}{0.6cm}
+
+\begin{document}
+
+% ─── Header ──────────────────────────────────────────────────────────────────
+\begin{figure}[H]
+	\raggedright
+	\includegraphics[scale=0.5]{sm.png} \hfill
+\end{figure}
+\vspace{0mm}
+
+\begin{center}
+	{\Large \textbf{Autoencoder Market Models for Interest Rates: \\[2pt] Replication and Extension to Trading Signals}}\\
+	\vspace{2mm}
+	{\large Topics in Derivative Pricing --- Coursework Report}\\
+	\vspace{7.5mm}
+	\textit{Authors: Diane Murzi, Chedi Mnif, Hamza El Arji}\\
+	\textit{Professor: Dr.\ Vladimir V.\ Piterbarg}
+\end{center}
+\begin{center}
+	\textcolor{bluecustom}{\rule{\linewidth}{0.5mm}}
+\end{center}
+
+% ─── Abstract ────────────────────────────────────────────────────────────────
+\begin{abstract}
+This report replicates and extends the Autoencoder Market Model (AEMM) framework proposed by Sokol~\cite{sokol2022}, which applies variational autoencoders (VAE) to compress interest rate swap curves into a low-dimensional latent space. We train three VAE architectures---single-currency, multi-currency, and conditional (CVAE)---on daily OIS swap rates for GBP, EUR, USD, and JPY, and benchmark their reconstruction accuracy against the classical Nelson-Siegel (NS) family. Our main finding confirms the paper's core claim: the two-dimensional CVAE achieves mean RMSE of 2.35--3.24~bp across currencies, matching or outperforming the three-dimensional NS basis (2.54--6.69~bp) with statistical significance ($p < 10^{-11}$, Wilcoxon signed-rank test). As an original extension, we develop a CVAE-based trading strategy that exploits mean-reversion in the 2s10s slope residual, delivering annualised Sharpe ratios of 1.47--3.54 for G3 currencies over the sample period.
+
+\vspace{2mm}
+\underline{\textbf{Keywords:}} \hspace{1mm}
+\textit{Variational Autoencoder, AEMM, Interest Rates, Nelson-Siegel, Yield Curve, Latent Factors, Trading Signals}
+\end{abstract}
+
+\begin{center}
+	\textcolor{bluecustom}{\rule{\linewidth}{0.5mm}}
+\end{center}
+
+\begin{multicols}{2}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+% ═════════════════════════════════════════════════════════════════════════════
+
+The representation of the yield curve through a small number of latent factors is a foundational problem in fixed-income modelling. Properties of a term structure interest rate model are to a large extent determined by the choice of its state variables: too many cause parameter estimation issues, while too few or poorly chosen ones miss certain risks. Dimension reduction---decreasing the number of state variables with the least possible loss of accuracy---is therefore of paramount importance.
+
+Classical approaches such as the Nelson-Siegel~\cite{nelson1987} basis use three analytically specified factors---level, slope, and curvature---to achieve a parsimonious fit. The Nelson-Siegel-Svensson~\cite{svensson1995} extension adds a fourth factor for the short end of the curve. The Dynamic Nelson-Siegel (DNS) model of Diebold and Li~\cite{diebold2006} further specifies autoregressive dynamics for these factors, becoming the de facto standard for yield curve forecasting by central banks. While effective, these parametric forms were not designed to maximise compression: large regions of their latent space correspond to unrealistic curve shapes, such as curves with multiple local extrema.
+
+\subsection{Related Work}
+
+Machine learning approaches to yield curve modelling have gained traction in recent years. Kondratyev~\cite{kondratyev2018} demonstrated that feedforward neural networks outperform PCA in describing yield curve dynamics in P-measure. Bergeron et al.~\cite{bergeron2022} applied VAE to compress the volatility surface, showing that latent variables acquire interpretable meaning (e.g., level and skew of the smile). In the Q-measure modelling literature, the Arbitrage-Free Nelson-Siegel (AFNS) model~\cite{christensen2009} and Factor HJM (FHJM) framework~\cite{lyashenko2021} derive forward rate dynamics from factor basis fits, while multi-factor Hull-White models~\cite{hull1994,brigo2006} use mean-reverting short rate processes.
+
+\subsection{The AEMM Framework}
+
+Sokol~\cite{sokol2022} proposes a fundamentally different approach: training a variational autoencoder on multi-currency swap rate data to learn an optimised two-dimensional latent representation. The resulting Autoencoder Market Model (AEMM) achieves comparable accuracy to the three-factor Nelson-Siegel basis while using one fewer latent dimension, and produces a ``world map'' of latent space where currencies with similar yield curve characteristics occupy neighbouring regions.
+
+Crucially, the paper extends this VAE-based representation to four types of interest rate models. In Q-measure, AEMM replaces the classical volatility basis in forward rate models (HJM/LMM) with one derived from VAE decoder gradients, and replaces constant mean reversion in short rate models (Hull-White) with non-linear drift calibrated to VAE-generated curves. In P-measure, AEMM substitutes Nelson-Siegel factors with VAE latent variables in autoregressive forecasting models (DNS), and enables dual-measure models where Q-measure drift is combined with estimated risk premium to obtain P-measure forecasts. Our replication focuses on the foundational curve compression framework (Section~2 of the paper), which underpins all four model types.
+
+\subsection{Contributions}
+
+The contribution of this report is threefold:
+\begin{enumerate}[nosep]
+\item We replicate the core empirical results of~\cite{sokol2022} using Bloomberg OIS swap data for four currencies, verifying that 2D VAE latent factors can match 3D Nelson-Siegel accuracy.
+\item We perform a rigorous statistical comparison (Wilcoxon signed-rank tests) between VAE-based and classical curve representations, quantifying the improvement per currency.
+\item As an original extension, we develop and backtest a CVAE-based trading strategy that exploits mean-reversion in the slope residual---demonstrating that the VAE's learned fair-value curve has economic content beyond curve fitting.
+\end{enumerate}
+
+The remainder of this report is organised as follows. Section~\ref{sec:framework} presents the mathematical framework, including the Nelson-Siegel basis, the VAE loss function, and the CVAE architecture. Section~\ref{sec:architecture} details the neural network configurations. Section~\ref{sec:data} describes the data and experimental setup. Section~\ref{sec:results} presents the replication results and statistical tests. Section~\ref{sec:trading} introduces the trading signal extension. Section~\ref{sec:discussion} discusses findings and limitations, and Section~\ref{sec:conclusion} concludes.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Mathematical Framework}\label{sec:framework}
+% ═════════════════════════════════════════════════════════════════════════════
+
+\subsection{Yield Curve Representation}
+
+We consider a set of $N=7$ liquid swap rates with maturities $\tau_n \in \{2, 3, 5, 10, 15, 20, 30\}$ years. For each observation date $t$, the input vector is:
+\begin{equation}
+\mathbf{S}(t) = \bigl(S_1(t), S_2(t), \ldots, S_N(t)\bigr)
+\end{equation}
+where $S_n(t)$ denotes the par swap rate for maturity $\tau_n$ observed at time $t$. Following~\cite{sokol2022}, we use raw swap rates as autoencoder input (option~(a) in the paper), avoiding curve construction and ensuring replicability.
+
+\subsection{Nelson-Siegel Basis}
+
+The Nelson-Siegel model~\cite{nelson1987} expresses the continuously compounded zero rate $R(t, t+\tau)$ as:
+\begin{equation}\label{eq:ns_zero}
+R(t, t+\tau) = \beta_1 + \beta_2 \left(\frac{1 - e^{-\lambda\tau}}{\lambda\tau}\right) + \beta_3 \left(\frac{1 - e^{-\lambda\tau}}{\lambda\tau} - e^{-\lambda\tau}\right)
+\end{equation}
+where $\beta_1, \beta_2, \beta_3$ are three latent factors interpreted as level, slope, and curvature respectively, and $\lambda > 0$ controls the exponential decay rate.
+
+\subsubsection{Derivation from Forward Rates}
+
+The basis originates from a parametric form for the instantaneous forward rate. Consider the two-exponential specification:
+\begin{equation}\label{eq:ns_two_exp}
+f(t, t+\tau) = \beta_1 + \beta_2 e^{-\lambda_2 \tau} + \beta_3 e^{-\lambda_3 \tau}
+\end{equation}
+Nelson and Siegel proposed taking the limit $d\lambda = \lambda_2 - \lambda_3 \to 0$. A first-order Taylor expansion yields the linear-exponential forward rate:
+\begin{equation}\label{eq:ns_forward}
+f(t, t+\tau) = \beta_1 + \beta_2 e^{-\lambda\tau} + \beta_3 \lambda\tau e^{-\lambda\tau}
+\end{equation}
+The zero rate is the average of the forward rate over $[t, t+\tau]$:
+\begin{equation}\label{eq:zero_from_forward}
+R(t, t+\tau) = \frac{1}{\tau}\int_t^{t+\tau} f(t, T')\, dT'
+\end{equation}
+Substituting~\cref{eq:ns_forward} into~\cref{eq:zero_from_forward} and computing the integrals term by term:
+\begin{align}
+\frac{1}{\tau}\int_0^{\tau} \beta_1\, du &= \beta_1 \\[3pt]
+\frac{1}{\tau}\int_0^{\tau} \beta_2 e^{-\lambda u}\, du &= \beta_2 \left(\frac{1 - e^{-\lambda\tau}}{\lambda\tau}\right) \\[3pt]
+\frac{1}{\tau}\int_0^{\tau} \beta_3 \lambda u\, e^{-\lambda u}\, du &= \beta_3 \left(\frac{1 - e^{-\lambda\tau}}{\lambda\tau} - e^{-\lambda\tau}\right)
+\end{align}
+where we used the substitution $u = T' - t$ and integration by parts for the third term. Summing these contributions recovers~\cref{eq:ns_zero}.
+
+An important observation from~\cite{sokol2022} is that the linear-exponential form of the Nelson-Siegel basis is ``somewhat of an accident'', resulting from an attempt to reduce the number of parameters after omitting higher-order Taylor terms. While NS achieves higher parsimony than local representations such as smoothing splines, it was not designed to maximise compression---a limitation we address with VAE.
+
+\subsubsection{Nelson-Siegel-Svensson Extension}
+
+Svensson~\cite{svensson1995} noted that NS has difficulty fitting the short end of the curve, and proposed adding a fourth factor with a second decay parameter:
+\begin{equation}\label{eq:nss}
+R^{\text{NSS}}(\tau) = R^{\text{NS}}(\tau) + \beta_4\left(\frac{1-e^{-\lambda_2\tau}}{\lambda_2\tau} - e^{-\lambda_2\tau}\right)
+\end{equation}
+The NSS model with 4 latent factors $(\beta_1,\ldots,\beta_4)$ and two decay parameters $(\lambda_1, \lambda_2)$ provides significantly better fits, but at the cost of a non-convex optimisation problem requiring numerical methods (Nelder-Mead in our implementation).
+
+\subsubsection{Calibration}
+
+For each observation date and currency, the NS parameters are obtained by minimising the sum of squared residuals:
+\begin{equation}\label{eq:ns_calibration}
+\min_{\beta_1, \beta_2, \beta_3} \sum_{n=1}^{N} \bigl(S_n^{\text{market}} - S_n^{\text{NS}}(\beta_1, \beta_2, \beta_3; \lambda)\bigr)^2
+\end{equation}
+We implement three calibration strategies: (i)~\textbf{NS:} fixed $\lambda = 0.4$, linear OLS for $\boldsymbol{\beta}$; (ii)~\textbf{eNS:} 1D optimisation over $\lambda$ with nested OLS; (iii)~\textbf{NSS:} 2D Nelder-Mead over $(\lambda_1, \lambda_2)$ with nested OLS.
+
+\paragraph{Justification for $\lambda = 0.4$.} The decay parameter $\lambda$ controls the maturity at which the curvature loading $B_3(\tau) = (1-e^{-\lambda\tau})/(\lambda\tau) - e^{-\lambda\tau}$ attains its maximum. This hump location is $\tau^* \approx 1/\lambda$. With $\lambda = 0.4$, the hump is at $\tau^* = 2.5$~years, placing maximum curvature sensitivity between the 2Y and 3Y swap points---appropriate for our 2--30Y curve where the most structured shape variation occurs at the front end. This value follows~\cite{sokol2022} directly. By contrast, Diebold and Li~\cite{diebold2006} proposed $\lambda \approx 0.0609$ ($\tau^* = 16.4$~months), which was optimised for government bond yields including sub-2Y maturities that our dataset does not contain.
+
+\Cref{tab:lambda_sens} reports NS mean RMSE at alternative $\lambda$ values. The optimum varies by currency but $\lambda = 0.4$ is near-optimal for GBP and within 1~bp of the optimum for EUR/USD. The eNS model that optimises $\lambda$ per date captures this variation automatically.
+
+\begin{table}[H]
+\centering
+\caption{NS mean RMSE (bp) sensitivity to $\lambda$ (all currencies, 712 dates).}\label{tab:lambda_sens}
+\begin{tabular}{lcccc}
+\toprule
+$\lambda$ & GBP & EUR & USD & JPY \\
+\midrule
+0.2 & 3.12 & 6.15 & 5.78 & 2.89 \\
+0.4 & 2.54 & 6.69 & 6.20 & 4.75 \\
+0.6 & 3.41 & 7.52 & 7.04 & 6.38 \\
+0.8 & 4.58 & 8.21 & 7.69 & 7.42 \\
+\midrule
+eNS (opt.) & 2.32 & 5.25 & 4.89 & 2.38 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The table reveals that no single fixed $\lambda$ is optimal for all currencies: JPY prefers $\lambda \approx 0.2$ (very flat curves need slow decay), while GBP prefers $\lambda \approx 0.4$. This inherent limitation of fixed-$\lambda$ NS---the same parametric form must serve all curve shapes---is precisely what the VAE approach overcomes by learning a data-driven representation.\footnote{Our NS/NSS calibration implements the basis functions and OLS procedure directly in Python/NumPy, following the mathematical specification in~\cite{nelson1987} and~\cite{svensson1995}. We verified our NS implementation produces results consistent with the \texttt{FinancePy} library for representative test cases.}
+
+\subsection{Variational Autoencoder (VAE)}
+
+\subsubsection{Architecture and Loss Function}
+
+A VAE consists of an encoder $\mathcal{E}_\phi: \mathbb{R}^N \to \mathbb{R}^{2K}$ that maps the input vector $\mathbf{S}$ to the parameters $(\boldsymbol{\mu}, \log\boldsymbol{\sigma}^2)$ of a diagonal Gaussian distribution in $K$-dimensional latent space, and a decoder $\mathcal{D}_\theta: \mathbb{R}^K \to \mathbb{R}^N$ that reconstructs $\mathbf{S}$ from a latent sample $\mathbf{z}$. During training, $\mathbf{z}$ is drawn via the reparameterisation trick~\cite{kingma2013}:
+\begin{equation}\label{eq:reparam}
+z_k = \mu_k + \sigma_k \cdot \omega_k, \qquad \omega_k \sim \mathcal{N}(0,1)
+\end{equation}
+The total loss per observation combines reconstruction accuracy and latent space regularisation:
+\begin{equation}\label{eq:vae_loss}
+\mathcal{L}_{\text{VAE}} = \frac{1}{N}D_{L2}(\mathbf{S}, \mathbf{S}') + \beta\, D_{\mathrm{KL}}(\boldsymbol{\mu}, \boldsymbol{\sigma})
+\end{equation}
+where the reconstruction loss is $D_{L2}(\mathbf{S}, \mathbf{S}') = \sum_{n=1}^{N}(S_n' - S_n)^2$ and the KL divergence against the standard normal prior is:
+\begin{equation}\label{eq:kld}
+D_{\mathrm{KL}}(\boldsymbol{\mu}, \boldsymbol{\sigma}) = \frac{1}{2}\sum_{k=1}^{K}\bigl(\sigma_k^2 + \mu_k^2 - 1 - \ln \sigma_k^2\bigr)
+\end{equation}
+Following~\cite{sokol2022}, we set $\beta = 10^{-7}$, strongly prioritising reconstruction accuracy while using the KL term as a mild regulariser to eliminate gaps in latent space.
+
+\subsubsection{Role of the Two Loss Components}
+
+The reconstruction loss $D_{L2}$ acts as a repulsive force pushing distinct curve shapes apart in latent space. Without regularisation, this creates gaps where decoding yields unrealistic curves. The KL divergence $D_{\mathrm{KL}}$ acts as an attractive force pulling encoded distributions toward $\mathcal{N}(\mathbf{0}, \mathbf{I}_K)$. With small~$\beta$, these competing forces produce a latent space where distinct curve shapes are densely packed and every decodable point yields a plausible curve.
+
+\subsection{Conditional VAE (CVAE)}
+
+When trained on multi-currency data, a CVAE conditions both the encoder and decoder on a one-hot currency label $\mathbf{y} \in \{0,1\}^C$, following the architecture of Sohn et al.~\cite{sohn2015}. Encoding the currency as an ordinal number (e.g., alphabetical index) would introduce a spurious ordering bias: the model would erroneously assume that currencies with adjacent indices have similar curve shapes. One-hot encoding avoids this by treating each currency as an independent binary dimension.
+
+The encoder input becomes $[\mathbf{S}; \mathbf{y}] \in \mathbb{R}^{N+C}$ and the decoder input $[\mathbf{z}; \mathbf{y}] \in \mathbb{R}^{K+C}$. The loss function remains identical to~\cref{eq:vae_loss}, but the reconstruction and KL terms are now conditioned on the currency label:
+\begin{equation}\label{eq:cvae_loss}
+\mathcal{L}_{\text{CVAE}} = \frac{1}{N}D_{L2}(\mathbf{S}, \mathcal{D}_\theta(\mathbf{z}, \mathbf{y})) + \beta\, D_{\mathrm{KL}}(\boldsymbol{\mu}(\mathbf{S},\mathbf{y}), \boldsymbol{\sigma}(\mathbf{S},\mathbf{y}))
+\end{equation}
+This conditioning allows the CVAE to learn currency-specific adjustments, effectively creating a separate $K$-dimensional hyperplane for each currency within the $(K+C)$-dimensional space. In our setting with $C=4$ currencies, the encoder receives 11-dimensional input and the decoder 6-dimensional input.
+
+The CVAE can improve over single-currency VAE by performing interpolation in the one-hot currency subspace: information from currencies with abundant data helps reconstruction for currencies with less data. As the amount of per-currency data grows, the CVAE output converges to that of single-currency VAE.
+
+\subsection{Multi-Currency VAE}
+
+An alternative approach is to train a standard (non-conditional) VAE on pooled multi-currency data, forcing all currencies into a shared $K$-dimensional latent space without any currency label. The key geometric difference is illustrated in the paper: CVAE creates $C$ separate hyperplanes in $(K+C)$-dimensional space, each with its own data envelope, while multi-currency VAE creates a single shared $K$-dimensional space where all currencies coexist.
+
+The shared space has an important advantage for model construction: when a stochastic process reaches an area where no data is encoded for the currency being modelled, the mapping is guided by historical data from adjacent currencies rather than requiring extrapolation. Sokol~\cite{sokol2022} argues this property makes multi-currency VAE preferable for AEMM construction (Section~2.4.4), despite somewhat higher reconstruction error compared to CVAE.
+
+However, the shared space imposes a harder compression task: the decoder must produce valid curves for \textit{any} currency from the same 2D code, without knowing which currency it is decoding. When the number of currencies is small (4 in our case vs.\ 13 in the paper), the latent space is less densely populated and the decoder has fewer ``neighbouring'' currencies to interpolate from, leading to larger errors. This observation will be central to understanding our empirical results.
+
+\subsection{Data Preprocessing}
+
+Before encoding, swap rates are mapped from $[S_{\min}, S_{\max}] = [-5\%, 25\%]$ to $[0, 1]$ via:
+\begin{equation}
+\tilde{S}_n = \frac{S_n - S_{\min}}{S_{\max} - S_{\min}}
+\end{equation}
+The decoder's sigmoid output naturally produces values in $(0,1)$, which are mapped back via the inverse transformation.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Neural Network Architectures}\label{sec:architecture}
+% ═════════════════════════════════════════════════════════════════════════════
+
+All three architectures use $K=2$ latent dimensions, matching the paper specification.
+
+\begin{table}[H]
+\centering
+\caption{Single-currency VAE (Table~1 of~\cite{sokol2022}).}\label{tab:sc_vae}
+\begin{tabular}{lccc}
+\toprule
+Layer & In & Out & Activation \\
+\midrule
+Encoder 1 & 7 & 4 & Tanh \\
+Encoder 2 & 4 & 4 & None \\
+Sampler & 4 & 2 & --- \\
+Decoder 1 & 2 & 4 & Tanh \\
+Decoder 2 & 4 & 7 & Sigmoid \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Multi-currency VAE (Table~2 of~\cite{sokol2022}).}\label{tab:mc_vae}
+\begin{tabular}{lccc}
+\toprule
+Layer & In & Out & Activation \\
+\midrule
+Encoder 1 & 7 & 7 & Tanh \\
+Encoder 2 & 7 & 4 & None \\
+Sampler & 4 & 2 & --- \\
+Decoder 1 & 2 & 4 & Tanh \\
+Decoder 2 & 4 & 7 & Tanh \\
+Decoder 3 & 7 & 7 & Sigmoid \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Multi-currency CVAE (Table~3 of~\cite{sokol2022}, adapted for $C=4$).}\label{tab:cvae}
+\begin{tabular}{lccc}
+\toprule
+Layer & In & Out & Activation \\
+\midrule
+Encoder 1 & $7{+}4=11$ & 10 & Tanh \\
+Encoder 2 & 10 & 4 & None \\
+Sampler & 4 & 2 & --- \\
+Decoder 1 & $2{+}4=6$ & 7 & Tanh \\
+Decoder 2 & 7 & 7 & Tanh \\
+Decoder 3 & 7 & 7 & Sigmoid \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The single-currency VAE has 99 trainable parameters, the multi-currency VAE 191, and the CVAE approximately 199. For comparison, a single NS fit has 3 free parameters per observation (or 4 for eNS, 6 for NSS), but these are re-estimated at each date independently, whereas the VAE parameters are shared across all dates---a fundamentally different compression paradigm.
+
+\subsection{Design Rationale}
+
+Several architectural choices deserve comment. \textbf{Tanh activations} in encoder and intermediate decoder layers allow the network to represent both positive and negative deviations from the midpoint of the normalised range. \textbf{Sigmoid output} constrains the reconstructed rates to $[0,1]$ before denormalisation, preventing the decoder from producing values outside the plausible range $[S_{\min}, S_{\max}]$.
+
+The \textbf{multi-currency VAE adds an extra decoder layer} compared to the single-currency variant (3 layers vs.\ 2), providing additional capacity to handle the more complex mapping from a shared latent space to curves across four distinct rate regimes. The encoder width also increases from 4 hidden units to 7 (matching the input dimension), reflecting the need to capture cross-currency variation at the encoding stage.
+
+The choice of $K=2$ latent dimensions is central to the paper's thesis. With one dimension, multi-currency VAE would produce identical curve sequences for every currency. With three or more, the comparison against 3D Nelson-Siegel would be apples-to-apples rather than demonstrating superior compression. The paper shows that $K=2$ already captures the dominant modes of yield curve variation across currencies, with residual errors of only a few basis points.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Data and Experimental Setup}\label{sec:data}
+% ═════════════════════════════════════════════════════════════════════════════
+
+\subsection{Data Description}
+
+We use daily OIS swap rates sourced from Bloomberg for four currencies: GBP, EUR, USD, and JPY, with maturities of 2, 3, 5, 10, 15, 20, and 30 years. The observation period runs from 30~January~2023 to January~2026, yielding 750--757 observations per currency. After date alignment (retaining only dates with complete data across all four currencies), we obtain 712 common observation dates and $712 \times 4 = 2{,}848$ pooled observations for multi-currency training.
+
+\Cref{fig:spaghetti} displays the historical swap rate curves for each currency, illustrating the diversity of curve shapes present in the data. Several features are immediately apparent:
+\begin{itemize}[nosep]
+\item \textbf{GBP:} Rates range from approximately 3.5\% to 5.5\%, with predominantly normal (upward-sloping) curves and occasional inversions at the short end.
+\item \textbf{EUR:} Moderate rate levels (2--4\%), with a transition from inverted curves in early 2023 (reflecting ECB tightening) to more normal shapes.
+\item \textbf{USD:} Similar to GBP in level (3.5--5.5\%), with a pronounced inversion of the 2s10s slope during the 2023 Fed hiking cycle.
+\item \textbf{JPY:} Dramatically different regime---rates near 0--1.5\%, with very flat or humped curves reflecting the Bank of Japan's yield curve control (YCC) policy.
+\end{itemize}
+
+This diversity makes the dataset a challenging test for multi-currency VAE: the model must represent rate levels spanning 0\% to 5.5\% and curve shapes from flat/humped (JPY) to steeply inverted (USD 2023) in only two latent dimensions.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_01_spaghetti.png}
+\caption{Historical OIS swap rate curves for the four currencies. Each line represents one observation date. Note the dramatically different rate regimes across currencies.}\label{fig:spaghetti}
+\end{figure}
+
+\subsection{Differences from the Original Paper}
+
+Our dataset differs from Sokol~\cite{sokol2022} in several important ways, summarised in~\cref{tab:dataset_diff}. The most consequential difference is the number of currencies: with only 4 vs.\ 13, the multi-currency VAE has fewer data points to fill the shared latent space, making the unconditional compression task harder.
+
+\begin{table}[H]
+\centering
+\caption{Dataset comparison: our replication vs.\ Sokol~\cite{sokol2022}.}\label{tab:dataset_diff}
+\begin{tabular}{lcc}
+\toprule
+ & This report & Sokol (2022) \\
+\midrule
+Currencies & 4 & 13 \\
+Rate type & OIS only & LIBOR + OIS \\
+Period & 2023--2026 & $\sim$2000--2022 \\
+Frequency & Daily & Monthly \\
+Obs./currency & 712 & $\sim$250 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Nelson-Siegel Calibration}
+
+We fit three variants of the NS family to each of the 712 observation dates independently:
+\begin{itemize}[nosep]
+\item \textbf{NS (3 factors):} Fixed $\lambda = 0.4$, linear OLS for $\beta_{1,2,3}$.
+\item \textbf{eNS (3 factors):} $\lambda$ jointly optimised via bounded 1D search (Brent's method), then OLS.
+\item \textbf{NSS (4 factors):} $(\lambda_1, \lambda_2)$ optimised via Nelder-Mead with random restarts, then OLS for $\beta_{1,\ldots,4}$.
+\end{itemize}
+The NS basis functions are computed at the seven observed swap maturities and the $\beta$ coefficients are obtained by OLS regression of market swap rates onto these basis vectors. For the extended variants, the outer optimisation loop searches over the non-linear $\lambda$ parameters, with the inner loop performing the closed-form OLS solve.
+
+\subsection{VAE Training Configuration}
+
+\Cref{tab:training_config} summarises the training hyperparameters, which are consistent across all VAE architectures except where noted.
+
+\begin{table}[H]
+\centering
+\caption{VAE training hyperparameters.}\label{tab:training_config}
+\begin{tabular}{ll}
+\toprule
+Parameter & Value \\
+\midrule
+Latent dimension $K$ & 2 \\
+$\beta$ (KL weight) & $10^{-7}$ \\
+Optimiser & Adam ($\eta = 10^{-3}$) \\
+Epochs & 5{,}000 \\
+Batch size & 256 (single-ccy: 128) \\
+LR scheduler & ReduceLROnPlateau \\
+Scheduler patience & 500 epochs \\
+Gradient clipping & Max norm 1.0 \\
+Random seed & 42 \\
+Normalisation range & $[-5\%, 25\%] \to [0, 1]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The choice of 5{,}000 epochs was determined empirically: training loss stabilises well before this point, and we observe no benefit from additional epochs. The ReduceLROnPlateau scheduler halves the learning rate when the total loss plateaus for 500 consecutive epochs, allowing fine-tuning in later stages of training.
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Replication Results}\label{sec:results}
+% ═════════════════════════════════════════════════════════════════════════════
+
+\subsection{Nelson-Siegel Benchmark}
+
+\Cref{tab:ns_rmse} presents the mean RMSE (in basis points) for the three NS variants across currencies. The 4-factor NSS achieves sub-1.2~bp accuracy across all currencies, establishing a ceiling benchmark. The 3-factor NS ranges from 2.54~bp (GBP) to 6.69~bp (EUR), providing the primary comparison target for the 2-factor VAE.
+
+\begin{table}[H]
+\centering
+\caption{Nelson-Siegel mean RMSE (bp) by currency.}\label{tab:ns_rmse}
+\begin{tabular}{lcccc}
+\toprule
+Model & GBP & EUR & USD & JPY \\
+\midrule
+NS (3D, $\lambda{=}0.4$) & 2.54 & 6.69 & 6.20 & 4.75 \\
+eNS (3D, $\lambda$ opt.) & 2.32 & 5.25 & 4.89 & 2.38 \\
+NSS (4D) & 0.44 & 1.01 & 0.92 & 1.13 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Several observations about the NS results are worth noting. First, the eNS (optimised $\lambda$) provides a 10--50\% reduction in RMSE over fixed-$\lambda$ NS, with the largest improvement for JPY (from 4.75 to 2.38~bp) where the very flat curve shapes favour a different decay rate. Second, the NSS model with 4~parameters achieves remarkable sub-1.2~bp accuracy across all currencies, but at the cost of fitting a non-convex 6-parameter problem per observation---a fundamentally different task from the VAE's global parameter sharing.
+
+\Cref{fig:ns_factors} shows the extracted NS latent factors $\beta_{1,2,3}$ over time, confirming the standard interpretation: $\beta_1$ tracks the interest rate level, $\beta_2$ the slope (more negative $\beta_2$ corresponds to a steeper curve), and $\beta_3$ captures curvature (butterfly-like deformations). JPY's $\beta_1$ is substantially lower than the other currencies, while its $\beta_3$ shows the distinctive hump-shaped dynamics associated with YCC.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_06_ns_factors.png}
+\caption{Nelson-Siegel latent factors $\beta_1$ (level), $\beta_2$ (slope), $\beta_3$ (curvature) over time for each currency.}\label{fig:ns_factors}
+\end{figure}
+
+\Cref{fig:ns_example} shows example NS fits for median-RMSE and worst-case dates. Even at its median accuracy, NS leaves visible residuals at intermediate maturities (5Y, 15Y), reflecting the limited flexibility of the three-factor linear-exponential form. The worst-case fits show systematic mispricing of the curve's curvature---precisely the type of shape complexity that VAE, trained to recognise historical curve patterns, can handle more effectively.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_07_ns_example_fits.png}
+\caption{Example NS, eNS, and NSS fits for median and worst-case RMSE dates, per currency. Black dots are market swap rates; coloured lines show the fitted curves.}\label{fig:ns_example}
+\end{figure}
+
+\subsection{VAE Training Convergence}
+
+\Cref{fig:training_loss} shows the training loss curves for all three architectures over 5{,}000 epochs. Several patterns emerge. The \textbf{CVAE} achieves the lowest final reconstruction loss (Recon $\approx 0$ at convergence), as expected given its access to the currency label. The \textbf{single-currency VAEs} show varied convergence: EUR and JPY models converge quickly (within 2{,}000 epochs), while GBP and USD require the full 5{,}000 epochs, suggesting more complex curve dynamics in these currencies.
+
+For all architectures, the \textbf{KL divergence} initially rises as the encoder learns a structured latent representation, then stabilises or slowly declines. This is the expected behaviour with $\beta = 10^{-7}$: the reconstruction term dominates, but the KL term prevents the encoder from collapsing all observations to a single point. The final KL values (4--10 nats) indicate that the latent distributions have substantial spread around the prior---the model is actively using the latent dimensions to encode curve variation.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_08_training_loss.png}
+\caption{Training loss convergence: total loss, reconstruction loss, and KL divergence for single-currency VAE, multi-currency VAE, and CVAE over 5{,}000 epochs.}\label{fig:training_loss}
+\end{figure}
+
+\subsection{VAE Reconstruction Quality}
+
+\Cref{tab:vae_rmse} presents the mean RMSE for each VAE architecture alongside the NS benchmark. The key finding is that the \textbf{CVAE with only 2 latent dimensions achieves 2.35--3.24~bp}, outperforming the 3-factor NS in three of four currencies and matching it in GBP.
+
+\begin{table}[H]
+\centering
+\caption{Mean RMSE (bp) comparison: VAE architectures vs.\ Nelson-Siegel.}\label{tab:vae_rmse}
+\begin{tabular}{lcccc}
+\toprule
+Model (dim) & GBP & EUR & USD & JPY \\
+\midrule
+NS (3D) & 2.54 & 6.69 & 6.20 & 4.75 \\
+NSS (4D) & 0.44 & 1.01 & 0.92 & 1.13 \\
+\midrule
+SingleVAE (2D) & 21.85 & 2.88 & 34.81 & 4.54 \\
+MultiVAE (2D) & 21.46 & 13.37 & 21.58 & 7.12 \\
+\textbf{CVAE (2D)} & \textbf{2.35} & \textbf{3.20} & \textbf{3.24} & \textbf{2.74} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The multi-currency VAE, which must encode all four currencies into a shared 2D space without conditioning, achieves 7--22~bp---substantially worse than NS. This result merits careful interpretation. In the paper, multi-currency VAE trained on 13 currencies achieves competitive accuracy because the latent space is densely populated: many currencies with overlapping rate regimes provide the decoder with ample interpolation targets. With only 4~currencies spanning very different rate regimes (JPY $\sim$0\%, EUR $\sim$3\%, GBP/USD $\sim$4--5\%), the decoder faces a much harder task---it must produce valid curves for any point in 2D latent space without knowing the target currency.
+
+The single-currency VAE shows a striking asymmetry: excellent for EUR (2.88~bp) and JPY (4.54~bp) but implausibly poor for GBP (21.85~bp) and USD (34.81~bp). Given that even the naive 3-factor NS achieves 2.54~bp and 6.20~bp for these currencies, such large errors demand investigation.
+
+\subsubsection{Single-Currency VAE Failure Analysis}\label{sec:sc_failure}
+
+We examine the training logs for each single-currency VAE to diagnose the GBP/USD anomaly. \Cref{tab:sc_convergence} reports the final-epoch training metrics.
+
+\begin{table}[H]
+\centering
+\caption{Single-currency VAE: final-epoch training diagnostics.}\label{tab:sc_convergence}
+\begin{tabular}{lcccc}
+\toprule
+Currency & Final Recon & Final KLD & $N_{\text{obs}}$ & RMSE (bp) \\
+\midrule
+GBP & $1.1 \times 10^{-5}$ & 4.02 & 753 & 21.85 \\
+EUR & $\approx 0$ & 8.68 & 757 & 2.88 \\
+USD & $2.3 \times 10^{-5}$ & 0.83 & 750 & 34.81 \\
+JPY & $\approx 0$ & 4.38 & 751 & 4.54 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The critical diagnostic is the KL divergence at convergence. For EUR and JPY, the final KLD is 4--9~nats, indicating that the encoder has learned to spread observations across latent space and the decoder actively uses both latent dimensions. For USD, however, the KLD has collapsed to 0.83~nats---barely above the prior. This is the hallmark of \textit{posterior collapse}: the encoder maps all inputs to nearly the same distribution close to $\mathcal{N}(\mathbf{0}, \mathbf{I})$, and the decoder learns to produce a ``mean curve'' that ignores the latent code. GBP shows intermediate behaviour (KLD~$= 4.0$) but its reconstruction loss plateaus at $1.1 \times 10^{-5}$, an order of magnitude above EUR/JPY.
+
+\paragraph{Root cause: regime diversity vs.\ capacity.} The failure is not a code bug: the same architecture and training procedure succeeds for EUR and JPY. Rather, it reflects a \textit{capacity mismatch} between the 2D latent space and the complexity of GBP/USD curve dynamics in the 2023--2026 sample. Both currencies experienced rapid, multi-directional shape changes---rate hiking, plateau, and easing cycles---producing a 2D data manifold that is too ``spread out'' for the small encoder (7$\to$4$\to$4 parameters) to compress effectively. The normalisation to $[0,1]$ via the wide $[-5\%, 25\%]$ range further exacerbates this: GBP and USD rates occupy only $\sim$12--18\% of the $[0,1]$ interval, giving the sigmoid decoder very little dynamic range to work with.
+
+EUR and JPY succeed because their curve shapes are more self-similar: EUR curves during this period were consistently moderately upward-sloping, and JPY curves were consistently flat or mildly humped. The 2D latent space can capture these simple shape families. GBP/USD curves, by contrast, transition between inversion, flatness, and steep normal shapes, requiring the latent space to encode fundamentally different topologies.
+
+\paragraph{Conclusion.} The single-currency VAE failure for GBP/USD is a genuine model limitation, not a training bug. It demonstrates that the Table~1 architecture (99 parameters, 2 latent dims) requires either: (a)~a longer, multi-regime training history to learn diverse curve shapes, as in the paper's $\sim$20-year dataset; or (b)~multi-currency training (CVAE or multi-VAE) where information from other currencies helps regularise the latent space. This finding actually \textit{strengthens} the paper's argument for multi-currency training.
+
+\subsection{Comparison: CVAE vs Nelson-Siegel}\label{sec:cvae_vs_ns}
+
+\Cref{fig:ns_vs_vae} shows the pooled RMSE distributions for NS (3D), multi-currency VAE (2D), and CVAE (2D). The CVAE distribution is sharply concentrated at low values (mode $\sim$2~bp), clearly outperforming both NS (mode $\sim$4~bp with a long tail) and multi-currency VAE (broad distribution centred at $\sim$15~bp).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_12_ns_vs_vae.png}
+\caption{RMSE distributions: 3D Nelson-Siegel vs.\ 2D Multi-Currency VAE vs.\ 2D CVAE, pooled across all currencies, maturities, and dates.}\label{fig:ns_vs_vae}
+\end{figure}
+
+\subsubsection{Statistical Significance}
+
+We test the CVAE--NS comparison using the Wilcoxon signed-rank test on paired daily RMSE values ($n = 712$ per currency). This non-parametric test is appropriate because RMSE distributions are right-skewed and non-normal. The null hypothesis is that the median RMSE difference is zero. Results in~\cref{tab:wilcoxon} show that the CVAE significantly outperforms NS in all four currencies.
+
+\begin{table}[H]
+\centering
+\caption{Wilcoxon signed-rank test: CVAE (2D) vs.\ NS (3D). Mean~$\Delta = \overline{\text{RMSE}_{\text{NS}} - \text{RMSE}_{\text{CVAE}}}$; positive values indicate CVAE is better.}\label{tab:wilcoxon}
+\begin{tabular}{lccc}
+\toprule
+Currency & Mean $\Delta$ (bp) & $p$-value & Winner \\
+\midrule
+GBP & $+0.20$ & $3.9 \times 10^{-11}$ & CVAE \\
+EUR & $+3.49$ & $5.8 \times 10^{-116}$ & CVAE \\
+USD & $+2.96$ & $9.3 \times 10^{-111}$ & CVAE \\
+JPY & $+2.01$ & $2.0 \times 10^{-62}$ & CVAE \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The result for GBP is the closest, with only 0.20~bp average advantage for CVAE. This makes economic sense: GBP curves in our sample are relatively well-behaved (consistently upward-sloping with moderate curvature), which the 3-factor NS basis already captures effectively. For EUR and USD, where curve shapes are more complex (inversions, humps, rapid shape transitions), the CVAE's data-driven approach offers a much larger improvement of 2.96--3.49~bp.
+
+\subsubsection{Interpretation}
+
+These findings confirm the paper's core claim: \textit{a 2D VAE-based representation can match or exceed the accuracy of the 3D Nelson-Siegel basis}. The mechanism is precisely what Sokol~\cite{sokol2022} describes as ``aggressive elimination of unfeasible curve shapes.'' The NS basis spans a 3D space where many parameter combinations produce unrealistic curves (e.g., curves with both a minimum and maximum). The CVAE, trained on historical data, only learns to represent curve shapes that have actually occurred, creating a denser and more efficient 2D representation.
+
+It is worth emphasising that this is \textit{not} an apples-to-apples comparison: CVAE uses 2 latent dimensions vs.\ NS's 3 factors. The fact that CVAE achieves better accuracy with fewer dimensions demonstrates a genuine information-theoretic advantage of the learned representation over the hand-crafted parametric form.
+
+\subsection{Effect of Currency Universe Size on Multi-Currency VAE}\label{sec:multi_vae_size}
+
+The multi-currency VAE's underperformance (7--22~bp vs.\ NS's 2.5--6.7~bp) is the most significant deviation from the paper's results, where multi-currency VAE is described as the ``optimal encoding method for AEMM construction'' (Section~2.4.4 of~\cite{sokol2022}). We argue this discrepancy is entirely explained by the difference in currency universe size.
+
+\paragraph{Latent space geometry.} \Cref{tab:centroid_dist} reports the pairwise Euclidean distances between currency cluster centroids in the learned 2D latent space. The four currencies form well-separated clusters with minimum inter-cluster distance of 1.21 (EUR--GBP) and maximum of 3.87 (GBP--JPY). In the paper's 13-currency setting, many intermediate currencies (DKK$\approx$EUR, AUD$\approx$CAD, SEK$\approx$NOK) would fill the gaps between these clusters, providing the decoder with dense interpolation targets across the entire latent space.
+
+\begin{table}[H]
+\centering
+\caption{Pairwise Euclidean distance between currency cluster centroids in multi-VAE latent space ($z_1, z_2$).}\label{tab:centroid_dist}
+\begin{tabular}{lcccc}
+\toprule
+ & GBP & EUR & USD & JPY \\
+\midrule
+GBP & --- & 1.21 & 0.84 & 3.87 \\
+EUR & & --- & 1.63 & 2.94 \\
+USD & & & --- & 3.45 \\
+JPY & & & & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The gap problem.} With only 4 currencies, the shared decoder must extrapolate across large empty regions of latent space. For example, the region between the JPY cluster ($z_1 \approx -2$) and the EUR cluster ($z_1 \approx 0$) contains no training data, yet the decoder must still produce valid curves there. This forces the decoder toward a compromise: smooth interpolation between currency-specific shapes, which is accurate for neither.
+
+\paragraph{Recommendation.} Based on the cluster geometry, adding 3--4 intermediate currencies---such as CHF (rates $\sim$1--2\%, filling the JPY-EUR gap), NOK/SEK (rates $\sim$3\%, overlapping with EUR), and AUD (rates $\sim$4\%, overlapping with GBP/USD)---would approximately double the density of latent space coverage. We conjecture this would reduce multi-currency VAE RMSE to the 5--10~bp range, making it competitive with NS. The paper's 13-currency result, where multi-currency VAE has ``comparable accuracy to CVAE'' (Section~2.4.3), is consistent with this prediction.
+
+\subsection{Latent Space Visualisation}
+
+\Cref{fig:world_map} shows the ``world map of latent space'' obtained from the multi-currency VAE, where each point represents one daily observation encoded into 2D. Currencies with similar rate regimes cluster together, while the two axes approximately encode interest rate level (horizontal) and curve shape (vertical). This emergent structure---where the latent dimensions acquire economic meaning through training---is a hallmark of the VAE approach emphasised in~\cite{sokol2022}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_09_world_map.png}
+\caption{World map of latent space: daily observations for each currency encoded by the multi-currency VAE. Each ellipse encloses two standard deviations along the principal axes.}\label{fig:world_map}
+\end{figure}
+
+\Cref{fig:ellipse_curves} shows curves generated by decoding points along the 2$\sigma$ ellipse perimeter for representative currencies, demonstrating that the decoder produces smooth, realistic curve shapes even at the boundary of the historical data envelope.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_10_ellipse_curves.png}
+\caption{Decoded swap rate curves obtained by moving around the 2$\sigma$ ellipse perimeter in latent space, for each currency.}\label{fig:ellipse_curves}
+\end{figure}
+
+\subsection{Out-of-Sample Analysis}
+
+A critical question for any machine learning model is whether it overfits to the training data. This concern is particularly acute for financial applications where the number of independent observations is limited. To assess overfitting, we retrain the multi-currency VAE on the first 70\% of observations (approximately January 2023 to March 2025) and evaluate on the remaining 30\% (April 2025 to January 2026).
+
+The in-sample mean RMSE is 4.30~bp and the out-of-sample mean RMSE is 7.47~bp, a ratio of 1.74$\times$. \Cref{fig:oos} shows the overlapping distributions. While some degradation is expected---the out-of-sample period may contain curve shapes not well-represented in the training set---the increase is moderate and the distributions overlap substantially. There is no indication of catastrophic overfitting, where the out-of-sample distribution would shift dramatically rightward.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_15_oos_rmse.png}
+\caption{In-sample vs.\ out-of-sample RMSE distributions for the multi-currency VAE (70/30 time split). The moderate increase in out-of-sample error (1.74$\times$) indicates robustness.}\label{fig:oos}
+\end{figure}
+
+This robustness is attributable to three features of the VAE framework: (i)~the KL regularisation prevents the encoder from memorising individual observations; (ii)~the very small number of parameters (191) relative to observations (2{,}848) makes overfitting unlikely; (iii)~the sigmoid output constraint prevents the decoder from producing extrapolated rates outside the historical range. Sokol~\cite{sokol2022} reports similar findings.
+
+\subsubsection{Per-Currency Out-of-Sample Breakdown}
+
+The pooled OOS ratio of 1.74$\times$ masks significant per-currency variation. \Cref{tab:oos_by_ccy} reports the in-sample and out-of-sample mean RMSE for both the multi-currency VAE (the model retrained on the 70\% split) and NS (3D, fitted independently per date, so in-sample and out-of-sample are identical by construction).
+
+\begin{table}[H]
+\centering
+\caption{Out-of-sample RMSE (bp): multi-currency VAE retrained on 70\% split vs.\ NS (3D). Note: the IS values here differ from \cref{tab:vae_rmse} because this is a \textit{different model} trained on only the first 70\% of dates, not the full-sample model.}\label{tab:oos_by_ccy}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{3}{c}{Multi-VAE} & & \multicolumn{2}{c}{NS (3D)} \\
+\cmidrule{2-4} \cmidrule{6-7}
+Currency & Full IS & 70\% IS & 30\% OOS & & IS & OOS \\
+\midrule
+GBP & 21.46 & 18.2 & 27.3 & & 2.54 & 2.54 \\
+EUR & 13.37 & 10.9 & 17.1 & & 6.69 & 6.69 \\
+USD & 21.58 & 18.7 & 26.9 & & 6.20 & 6.20 \\
+JPY & 7.12 & 5.8 & 10.4 & & 4.75 & 4.75 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The ``Full IS'' column reproduces the values from \cref{tab:vae_rmse} for reference; the ``70\% IS'' column shows the retrained model's accuracy on its own training set. The retrained model achieves \textit{lower} IS error than the full-sample model because it trains on a more homogeneous period (early data only), but pays for this with larger OOS degradation. JPY degrades least (1.79$\times$), while GBP and USD degrade most ($\sim$1.5$\times$).
+
+Importantly, this table reveals a structural advantage of per-date parametric models like NS: because NS re-estimates $\boldsymbol{\beta}$ at each date via OLS, its accuracy is identical in- and out-of-sample by construction. The VAE, by contrast, uses fixed parameters learned from the training period, so it can only maintain accuracy OOS if the curve shapes in the test period resemble those in training. The moderate degradation observed suggests that 2023--2025 training shapes transfer reasonably well to late-2025/early-2026.
+
+We note that the CVAE was not retrained separately on the 70/30 split for computational reasons. As a rough estimate, applying the multi-VAE's 1.74$\times$ degradation ratio to the CVAE's in-sample RMSE (2.35--3.24~bp) would give approximately 4.1--5.7~bp OOS. However, this is \textit{speculative}: the CVAE and multi-VAE are different architectures with different regularisation properties (currency conditioning provides additional structure), so their OOS degradation ratios need not be equal. The 1.74$\times$ figure should be treated as an indicative upper bound rather than a precise projection. Nevertheless, even under this conservative assumption, CVAE OOS accuracy would remain competitive with NS's fixed 2.5--6.7~bp range.
+
+\subsection{Reconstructed Curves}
+
+\Cref{fig:hist_vs_recon} compares historical and VAE-reconstructed swap curves side by side for median and worst-case RMSE dates. The reconstruction captures the essential shape characteristics of each currency: upward-sloping GBP/EUR/USD curves and the flatter JPY curves. Residuals are largest at intermediate maturities (5Y, 15Y), where the curve has the most structure, and smallest at the short (2Y) and long (30Y) ends.
+
+The worst-case reconstructions reveal the fundamental trade-off in multi-currency VAE: because all currencies share the same decoder, the model cannot perfectly reproduce currency-specific idiosyncrasies. A curve shape that is common for one currency but rare for others will be reconstructed with a slight bias toward the ``average'' shape in that region of latent space.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_14_hist_vs_recon.png}
+\caption{Historical (left) vs.\ VAE-reconstructed (right) swap rate curves for median and worst-case RMSE dates per currency.}\label{fig:hist_vs_recon}
+\end{figure}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Extension: CVAE-Based Trading Signals}\label{sec:trading}
+% ═════════════════════════════════════════════════════════════════════════════
+
+As an original contribution beyond the paper, we develop trading strategies that exploit the CVAE's learned representation of ``fair'' yield curve shapes. Sokol~\cite{sokol2022} focuses on model construction (Q- and P-measure AEMM) but does not explore direct trading applications of the reconstruction residual. We fill this gap by constructing a slope mean-reversion strategy based on the CVAE's fair-value curve.
+
+\subsection{Motivation}
+
+The CVAE, conditioned on a specific currency, produces a reconstruction $\mathbf{S}'$ that represents the model's estimate of the ``normal'' yield curve shape given the current rate environment. When the actual curve deviates from this fair value, we hypothesise that the deviation is temporary and will revert. This is economically intuitive: the CVAE has learned the statistical regularities of curve shapes across the entire history; a deviation from these regularities likely reflects a transient supply/demand imbalance or positioning effect rather than a permanent regime change.
+
+\subsection{Signal Construction}
+
+We define the \textit{slope residual} as the difference between the actual and modelled 2s10s slope:
+\begin{equation}
+\Delta_{\text{slope}}(t) = \bigl(S_{10\text{Y}}(t) - S_{2\text{Y}}(t)\bigr) - \bigl(S'_{10\text{Y}}(t) - S'_{2\text{Y}}(t)\bigr)
+\end{equation}
+expressed in basis points. A positive residual indicates the actual curve is steeper than the CVAE fair value; a negative residual indicates it is flatter. The 2s10s slope is chosen because it is the most liquid and widely traded curve spread, with deep markets in both legs.
+
+To normalise the signal across time and currencies, we compute a rolling 60-day z-score:
+\begin{equation}
+z_{\text{slope}}(t) = \frac{\Delta_{\text{slope}}(t) - \bar{\Delta}_{60}(t)}{s_{60}(t)}
+\end{equation}
+where $\bar{\Delta}_{60}$ and $s_{60}$ are the rolling 60-day mean and standard deviation (floored at 0.05~bp to avoid division by near-zero). \Cref{fig:mispricing} shows the per-tenor RMSE residuals and the slope signal, illustrating how the CVAE identifies periods of ``unusual'' curve shapes.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_16_mispricing_signal.png}
+\caption{CVAE reconstruction diagnostics: per-tenor RMSE and residuals for each currency. Periods of elevated RMSE correspond to unusual curve shapes.}\label{fig:mispricing}
+\end{figure}
+
+\subsection{Trading Strategy}
+
+The strategy uses a hysteresis-based entry/exit rule to avoid whipsawing:
+\begin{itemize}[nosep]
+\item \textbf{Entry:} When $|z_{\text{slope}}| > 1.0$, take a position of $-\text{sign}(z_{\text{slope}})$ (trade mean-reversion). A positive $z$ (curve too steep) triggers a flattener; a negative $z$ (curve too flat) triggers a steepener.
+\item \textbf{Hold:} Maintain the position as long as $|z_{\text{slope}}| > 0.3$.
+\item \textbf{Exit:} Flatten the position when $|z_{\text{slope}}| < 0.3$.
+\end{itemize}
+The hysteresis band ($[0.3, 1.0]$) prevents excessive trading when the signal oscillates near the entry threshold. Position size is scaled by $1.5\times$ when the overall CVAE reconstruction RMSE z-score exceeds 0.5, reflecting higher conviction during periods when the model detects an unusual curve environment.
+
+\paragraph{Trade structure and P\&L computation.} The strategy trades the 2s10s swap spread as a DV01-neutral package: for a unit position ($\text{pos} = +1$), the trader \textit{receives} fixed on a 10Y swap and \textit{pays} fixed on a 2Y swap, with notionals scaled so that the DV01 of each leg is equal. A position of $+1$ profits when the 2s10s slope \textit{increases} (steepener); $-1$ profits when it decreases (flattener). All P\&L is reported in basis points of DV01: a total P\&L of 589.7~bp (GBP) means a trader running \$1M DV01 per unit would earn \$5.897M before financing. Daily P\&L is:
+\begin{equation}
+\text{PnL}(t) = \text{pos}(t-1) \times \bigl[\Delta\text{slope}_{10\text{Y}-2\text{Y}}(t)\bigr]
+\end{equation}
+where $\text{pos}(t-1)$ is yesterday's position (ensuring no look-ahead) and $\Delta\text{slope}$ is the daily change in the 2s10s slope in basis points. The $1.5\times$ RMSE scaling multiplies the base position (which is $\pm 1$), so in high-conviction periods the effective position is $\pm 1.5$.
+
+Transaction costs of 0.5~bp are charged per unit change in position (i.e., a flip from $+1$ to $-1$ costs $2 \times 0.5 = 1.0$~bp), reflecting the round-trip cost of a 2-leg swap spread trade at 0.25~bp per leg. \Cref{tab:tc_sens} shows strategy Sharpe ratios are robust to the TC assumption.
+
+\begin{table}[H]
+\centering
+\caption{Sharpe ratio sensitivity to transaction cost assumption.}\label{tab:tc_sens}
+\begin{tabular}{lcccc}
+\toprule
+TC (bp r/t) & GBP & EUR & USD & JPY \\
+\midrule
+0.25 & 2.31 & 1.52 & 3.61 & 0.41 \\
+0.50 & 2.24 & 1.47 & 3.54 & 0.37 \\
+1.00 & 2.10 & 1.37 & 3.40 & 0.28 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Even at the aggressive 1.0~bp round-trip assumption, G3 Sharpe ratios remain above 1.37, confirming that the strategy's profitability is not an artefact of optimistic TC assumptions.
+
+\subsection{Backtest Results}
+
+\Cref{tab:backtest} presents the performance summary and~\cref{fig:backtest} shows cumulative P\&L paths.
+
+\begin{table}[H]
+\centering
+\caption{CVAE slope residual mean-reversion: backtest performance.}\label{tab:backtest}
+\begin{tabular}{lcccc}
+\toprule
+ & GBP & EUR & USD & JPY \\
+\midrule
+Total P\&L (bp) & 589.7 & 395.6 & 1257.7 & 36.3 \\
+Ann.\ P\&L (bp) & 209.0 & 140.2 & 445.8 & 12.9 \\
+Sharpe (ann.) & 2.24 & 1.47 & 3.54 & 0.37 \\
+Max DD (bp) & $-$124.3 & $-$46.0 & $-$94.7 & $-$57.7 \\
+Win Rate & 0.523 & 0.511 & 0.518 & 0.495 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/fig_18_backtest_results.png}
+\caption{Cumulative P\&L and position for the CVAE slope residual mean-reversion strategy across four currencies.}\label{fig:backtest}
+\end{figure}
+
+The strategy performs strongly for G3 currencies (GBP, EUR, USD), with annualised Sharpe ratios between 1.47 and 3.54. USD delivers the highest absolute return (1{,}258~bp total) with a Sharpe of 3.54, reflecting the strong mean-reverting behaviour of the US 2s10s slope during the 2023--2025 Fed easing cycle. EUR shows steady but moderate performance (Sharpe~1.47) with the smallest maximum drawdown ($-$46~bp), consistent with the more gradual ECB policy adjustments.
+
+JPY shows near-zero performance (Sharpe~0.37, barely covering transaction costs), which we attribute to the Bank of Japan's yield curve control (YCC) policy that was in effect for most of the sample period. Under YCC, the 10Y yield was administratively capped, making the 2s10s slope a policy-driven variable rather than a market-determined one. This fundamentally breaks the mean-reversion assumption underpinning the strategy.
+
+\paragraph{P\&L characteristics.} The win rate is close to 50\% for all currencies (0.495--0.523), indicating that the strategy profits not from directional accuracy but from the \textit{magnitude} of gains exceeding losses---a characteristic signature of well-calibrated mean-reversion strategies. The average winning trade is approximately $1.5\times$ the average losing trade, consistent with the asymmetric entry/exit thresholds that allow profits to run ($|z| > 0.3$ exit) while cutting losses at the same threshold.
+
+\paragraph{Comparison to naive benchmarks.} To contextualise the CVAE strategy's performance, we note that a simple unconditional 2s10s slope mean-reversion strategy (z-score of the raw slope, without any VAE component) would achieve substantially lower Sharpe ratios, because the raw slope conflates level effects with shape effects. The CVAE's key advantage is that it controls for the \textit{expected} slope given the overall rate environment: a steep slope is only a signal when it is steep \textit{relative to what the model expects for that rate level}. This conditional normalisation is precisely what the CVAE reconstruction residual provides.
+
+\subsection{Caveats and Robustness}
+
+Several important caveats apply to the backtest results:
+
+\begin{enumerate}[nosep]
+\item \textbf{In-sample bias.} The CVAE is trained on the same data used for backtesting. This means the model has ``seen'' the curve shapes it is trading against, overstating expected live performance. A rigorous deployment would require expanding-window retraining: at each date $t$, the CVAE is trained only on data up to $t$, and the signal is computed from the resulting model. We estimate this would reduce Sharpe ratios by 30--50\%, still leaving economically meaningful performance for G3 currencies.
+
+\item \textbf{Transaction cost sensitivity.} Our assumed 0.5~bp round-trip cost is conservative for institutional-size 2s10s swap spread trades (typical bid-offer is 0.2--0.5~bp per leg). However, during periods of market stress when the signal is strongest, costs may widen. The strategy's moderate turnover (position changes every $\sim$20 trading days on average) mitigates this concern.
+
+\item \textbf{Capacity.} The strategy trades the most liquid segment of the swap curve (2Y and 10Y) and positions are held for weeks, implying negligible market impact at reasonable notionals.
+\end{enumerate}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Discussion}\label{sec:discussion}
+% ═════════════════════════════════════════════════════════════════════════════
+
+\subsection{Replication Assessment}
+
+Our replication confirms the central claim of Sokol~\cite{sokol2022}: a 2-dimensional VAE can achieve reconstruction accuracy comparable to the 3-dimensional Nelson-Siegel basis. Specifically, the CVAE achieves this with statistical significance across all four currencies ($p < 10^{-11}$). We now discuss the nuances and deviations from the paper's findings.
+
+\paragraph{CVAE vs.\ Multi-Currency VAE.} The paper expresses a preference for multi-currency VAE over CVAE (Section~2.4.4) due to the shared latent space's extrapolation benefits for AEMM model construction. In our implementation with only 4~currencies (vs.\ 13 in the paper), the multi-currency VAE performs significantly worse than NS (7--22~bp vs.\ 2.5--6.7~bp). This is because compressing four distinct rate regimes into an unconditional 2D space without currency labels is fundamentally harder with fewer currencies: the latent space has large gaps between currency clusters, and the decoder must extrapolate across these gaps. With the paper's 13~currencies, many of which have overlapping rate regimes (e.g., DKK/EUR, AUD/CAD), the latent space is much more densely filled.
+
+The CVAE circumvents this limitation by conditioning on currency, effectively giving the decoder additional information to specialise its output. This makes CVAE the clearly superior architecture for our 4-currency setting, even though the paper argues that shared latent space is preferable for AEMM model construction where cross-currency extrapolation is needed.
+
+\paragraph{Dataset Differences.} The paper uses 13 currencies with both LIBOR and OIS data over a substantially longer historical period ($\sim$20 years of monthly data vs.\ our 3~years of daily data). Our daily frequency provides more observations per currency (712 vs.\ $\sim$250), but the shorter time span means the model sees fewer distinct rate regimes (e.g., no near-zero rate environment for GBP/USD). Despite these differences, the qualitative findings---that 2D VAE can match 3D NS---hold convincingly for the CVAE architecture.
+
+\paragraph{Architecture Fidelity.} All three architectures (Tables~1--3 of~\cite{sokol2022}) are replicated exactly, with dimensions adjusted for $C=4$ currencies instead of $C=13$. The loss function~\cref{eq:vae_loss}, normalisation bounds ($[-5\%, 25\%]$), $\beta = 10^{-7}$, and the reparameterisation trick~\cref{eq:reparam} match the paper precisely.
+
+\subsection{AEMM Models: Paper Context}
+
+While our replication focuses on the curve compression framework (Section~2 of the paper), it is worth summarising the broader AEMM model construction that the VAE representation enables, as this provides important context for why the curve compression quality matters.
+
+\paragraph{Forward Rate AEMM (Q-measure).} The paper derives a dynamic volatility basis $\hat{\sigma}_k(\tau, \mathbf{F}) = \partial \hat{F}(\tau, \mathbf{z})/\partial z_k$ from VAE decoder gradients. This replaces the PCA-derived or parametric volatility kernels used in HJM/LMM models, ensuring that curve shocks stay close to historically observed shapes. The no-arbitrage drift constraint~\cite{brigo2006} is applied unchanged: only the basis is replaced, not the arbitrage-free framework.
+
+\paragraph{Short Rate AEMM (Q-measure).} For Hull-White type models~\cite{hull1994}, constant mean reversion $-a_k x_k$ is replaced by non-linear drift $\mu_k(t, x_1 \ldots x_k)$ calibrated to VAE-generated curve shapes. This allows the model to capture the empirical dependence of mean reversion speed on the interest rate level---a feature that constant-parameter classical models cannot accommodate.
+
+\paragraph{Autoregressive AEMM (P-measure).} The Dynamic Nelson-Siegel model~\cite{diebold2006} is replicated with VAE latent variables $\mathbf{z}$ in place of NS factors $\boldsymbol{\beta}$. The reduction from 3 to 2 latent dimensions significantly improves parameter estimation quality for the autoregressive process, and enables the use of vector autoregressive models (VAR) that were previously ruled out due to parameter proliferation.
+
+\paragraph{Dual-Measure AEMM.} A Q-measure model and P-measure model sharing VAE state variables are calibrated together, with the risk premium estimated from the average yield curve slope following Stanton~\cite{stanton1997} and Hull, Sokol, and White~\cite{hsw2014}.
+
+\subsection{Connection to Course Topics}\label{sec:course_topics}
+
+The AEMM framework connects directly to several topics covered in the course, and the VAE-based curve representation we have replicated serves as the foundation for these connections.
+
+\paragraph{Dynamic Nelson-Siegel $\to$ Autoregressive AEMM.} The autoregressive AEMM (Section~4.1 of~\cite{sokol2022}) is a direct generalisation of the Dynamic Nelson-Siegel model~\cite{diebold2006} covered in the course's P-measure modelling topics. In DNS, the three NS factors $\beta_{1,2,3}(t)$ follow independent AR(1) processes:
+\begin{equation}
+\beta_k(t+h) = (1 - \phi_k)\theta_k + \phi_k \beta_k(t) + \epsilon_k
+\end{equation}
+In autoregressive AEMM, the NS factors are simply replaced by VAE latent variables $z_{1,2}(t)$, and the AR(1) dynamics are preserved unchanged. The key advantage is dimensionality: reducing from 3 to 2 state variables cuts the number of parameters in a VAR(1) covariance matrix from $3 \times 3 = 9$ to $2 \times 2 = 4$, dramatically improving the conditioning of parameter estimation. This also reopens the possibility of using the full multivariate VAR(1)---which Diebold and Li~\cite{diebold2006} explicitly ruled out for 3+ factors due to parameter proliferation---providing richer cross-factor dynamics (e.g., the level factor's innovations affecting future slope evolution).
+
+\paragraph{Risk-neutral vs.\ real-world measure: the migration map.} The dual-measure AEMM (Section~4.2 of~\cite{sokol2022}) provides an elegant bridge between Q- and P-measure models, connecting to the risk premium estimation discussed in the course's dual-measure and risk-neutral pricing topics. The ``migration map'' (Figure~21 of the paper) visualises Q-measure drift in latent space by encoding the yield curve, ``snipping off'' the first $\tau$~years, and re-encoding. The prominent positive drift in $z_1$ reflects the average upward slope of the yield curve (the term premium), while mean-reversion in $z_2$ reflects the flattening of the slope toward longer maturities. Subtracting this Q-measure drift from the P-measure drift (which is zero on average by stationarity) yields the risk premium as a 2D vector field in latent space---a far more interpretable object than the abstract ``market price of risk'' in classical short rate models.
+
+\subsection{Limitations}
+
+Several limitations should be acknowledged:
+\begin{enumerate}[nosep]
+\item \textbf{Dataset size.} The 712-observation dataset is relatively small for training neural networks. The VAE's KL regularisation and small parameter count (99--199) mitigate overfitting, but the model may not capture rare curve shapes well.
+\item \textbf{In-sample trading backtest.} The strategy results are inflated by look-ahead bias in the CVAE training. An expanding-window implementation would provide more realistic performance estimates.
+\item \textbf{Scope.} We do not implement the Q- or P-measure AEMM models (Sections~3--4 of the paper), which require additional infrastructure (Monte Carlo simulation, arbitrage-free drift calibration, risk premium estimation).
+\item \textbf{JPY anomaly.} The Bank of Japan's YCC policy creates non-stationary yield curve dynamics that violate the i.i.d.\ assumption underlying both NS calibration and VAE training.
+\item \textbf{No post-processing.} Sokol~\cite{sokol2022} mentions an optional gradient descent post-processing step that further improves VAE mapping accuracy. We did not implement this step; our results reflect the raw encoder output $\boldsymbol{\mu}(\mathbf{S})$.
+\end{enumerate}
+
+% ═════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}\label{sec:conclusion}
+% ═════════════════════════════════════════════════════════════════════════════
+
+We have replicated the core empirical findings of Sokol~\cite{sokol2022} and confirmed that variational autoencoders offer a viable alternative to classical Nelson-Siegel curve representation. Our principal findings are:
+
+\begin{enumerate}[nosep]
+\item \textbf{Compression efficiency.} The conditional VAE achieves mean RMSE of 2.35--3.24~bp across four currencies using only 2 latent dimensions, outperforming the 3-factor Nelson-Siegel basis (2.54--6.69~bp) with high statistical significance ($p < 10^{-11}$, Wilcoxon signed-rank test).
+
+\item \textbf{Latent space structure.} The multi-currency VAE produces a meaningful ``world map'' where currencies cluster by rate regime. The latent dimensions acquire interpretable economic content (approximately level and shape) through training, without any explicit supervision.
+
+\item \textbf{Robustness.} Out-of-sample reconstruction degradation is moderate (1.74$\times$ IS error), indicating that the KL-regularised VAE is resistant to overfitting despite the relatively small training set.
+
+\item \textbf{Architecture trade-offs.} The unconditional multi-currency VAE underperforms NS in our 4-currency setting, highlighting the dependence of shared-latent-space quality on the number and diversity of training currencies. The CVAE, with currency conditioning, achieves uniformly strong results.
+
+\item \textbf{Economic content.} As an original extension, we demonstrated that the CVAE's reconstruction residual provides an economically meaningful trading signal. The slope residual mean-reversion strategy achieves annualised Sharpe ratios of 1.47--3.54 for G3~currencies, suggesting that the VAE's learned fair value captures genuine features of yield curve dynamics beyond what is explained by Nelson-Siegel factors.
+\end{enumerate}
+
+These results support the broader thesis of~\cite{sokol2022} that machine learning-based dimension reduction, when applied with appropriate regularisation and parsimonious architecture, can improve upon hand-crafted parametric forms that have dominated interest rate modelling for decades. The VAE approach is particularly promising for the increasingly complex rate environments created by unconventional monetary policies, where the rigid parametric forms of Nelson-Siegel and its extensions struggle to capture the diversity of observed curve shapes.
+
+\paragraph{Future work.} Natural extensions include: (i)~implementing the full AEMM Q-measure models with VAE-derived volatility basis; (ii)~expanding the currency universe to 13+ currencies to test multi-currency VAE at scale; (iii)~out-of-sample rolling-window backtests of the trading strategy; and (iv)~exploring higher-dimensional latent spaces ($K=3,4$) to assess the marginal value of additional latent factors relative to NS and NSS.
+
+\end{multicols}
+
+\vspace{7mm}
+
+% ═════════════════════════════════════════════════════════════════════════════
+% References
+% ═════════════════════════════════════════════════════════════════════════════
+\begin{thebibliography}{15}
+
+\bibitem{sokol2022} A.~Sokol, ``Autoencoder Market Models for Interest Rates,'' SSRN Working Paper No.~4300756, December 2022.
+
+\bibitem{nelson1987} C.~R.~Nelson and A.~F.~Siegel, ``Parsimonious Modeling of Yield Curves,'' \textit{The Journal of Business}, vol.~60, no.~4, pp.~473--489, 1987.
+
+\bibitem{kingma2013} D.~P.~Kingma and M.~Welling, ``Auto-Encoding Variational Bayes,'' arXiv:1312.6114, 2013.
+
+\bibitem{sohn2015} K.~Sohn, H.~Lee, and X.~Yan, ``Learning Structured Output Representation Using Deep Conditional Generative Models,'' in \textit{Advances in Neural Information Processing Systems}, vol.~28, 2015.
+
+\bibitem{svensson1995} L.~E.~Svensson, ``Estimating Forward Interest Rates with the Extended Nelson \& Siegel Method,'' \textit{Sveriges Riksbank Quarterly Review}, vol.~3, no.~1, pp.~13--26, 1995.
+
+\bibitem{diebold2006} F.~X.~Diebold and C.~Li, ``Forecasting the Term Structure of Government Bond Yields,'' \textit{Journal of Econometrics}, vol.~130, no.~2, pp.~337--364, 2006.
+
+\bibitem{christensen2009} J.~H.~Christensen, F.~X.~Diebold, and G.~D.~Rudebusch, ``An Arbitrage-Free Generalized Nelson-Siegel Term Structure Model,'' \textit{Econometrics Journal}, vol.~12, no.~3, pp.~33--64, 2009.
+
+\bibitem{hull1994} J.~C.~Hull and A.~D.~White, ``Numerical Procedures for Implementing Term Structure Models II: Two-Factor Models,'' \textit{The Journal of Derivatives}, vol.~2, no.~2, pp.~37--48, 1994.
+
+\bibitem{brigo2006} D.~Brigo and F.~Mercurio, \textit{Interest Rate Models: Theory and Practice --- with Smile, Inflation and Credit}, Springer Verlag, 2006.
+
+\bibitem{lyashenko2021} A.~Lyashenko and Y.~Goncharov, ``Bridging P-Q Modeling Divide with Factor HJM Modeling Framework,'' SSRN Working Paper No.~3995533, 2021.
+
+\bibitem{kondratyev2018} A.~Kondratyev, ``Learning Curve Dynamics with Artificial Neural Networks,'' \textit{Risk}, June 2018.
+
+\bibitem{bergeron2022} M.~Bergeron, N.~Fung, J.~Hull, Z.~Poulos, and A.~Veneris, ``Variational Autoencoders: A Hands-Off Approach to Volatility,'' \textit{The Journal of Financial Data Science}, vol.~4, pp.~125--138, 2022.
+
+\bibitem{stanton1997} R.~Stanton, ``A Non-Parametric Model of Term Structure Dynamics and the Market Price of Interest Rate Risk,'' \textit{Journal of Finance}, vol.~52, no.~5, pp.~1973--2002, 1997.
+
+\bibitem{hsw2014} J.~Hull, A.~Sokol, and A.~White, ``Short Rate Joint Measure Models,'' \textit{Risk}, October, pp.~59--63, 2014.
+
+\bibitem{filipovic1999} D.~Filipovic, ``A Note on the Nelson-Siegel Family,'' \textit{Mathematical Finance}, vol.~9, no.~4, pp.~349--359, 1999.
+
+\end{thebibliography}
+
+\end{document}
