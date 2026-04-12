@@ -8,8 +8,12 @@ ns_results.pkl
 trading_results.pkl
 vae_results.pkl
 
+results/*
+
 # (optionnel) tous les pickle si tu veux être safe
 *.pkl
 
 # (optionnel) tous les poids PyTorch
 *.pt
+
+.DS_Store
