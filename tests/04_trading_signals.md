@@ -332,11 +332,11 @@ panels[CURRENCIES[0]].tail(3)
       <td>0.045130</td>
       <td>54.40</td>
       <td>4.00</td>
-      <td>54.210274</td>
-      <td>0.189726</td>
+      <td>54.210052</td>
+      <td>0.189948</td>
       <td>54.058036</td>
       <td>0.341964</td>
-      <td>-0.054671</td>
+      <td>-0.054663</td>
     </tr>
     <tr>
       <th>2026-01-14</th>
@@ -344,11 +344,11 @@ panels[CURRENCIES[0]].tail(3)
       <td>0.044637</td>
       <td>51.87</td>
       <td>-2.53</td>
-      <td>52.427574</td>
-      <td>-0.557574</td>
+      <td>52.427277</td>
+      <td>-0.557277</td>
       <td>51.561118</td>
       <td>0.308882</td>
-      <td>-0.068960</td>
+      <td>-0.068952</td>
     </tr>
     <tr>
       <th>2026-01-15</th>
@@ -356,11 +356,11 @@ panels[CURRENCIES[0]].tail(3)
       <td>0.044840</td>
       <td>50.40</td>
       <td>-1.47</td>
-      <td>50.579906</td>
-      <td>-0.179906</td>
+      <td>50.579830</td>
+      <td>-0.179830</td>
       <td>50.056944</td>
       <td>0.343056</td>
-      <td>-0.074409</td>
+      <td>-0.074401</td>
     </tr>
   </tbody>
 </table>
@@ -383,9 +383,9 @@ swap (CME Group, *Swap Rate Curve Strategies*, p. 6). To trade DV01-neutral
 — this is the conventional spread weighting in Clarus FT and CME Group docs.
 
 **Position sign convention.**
-- `+1` = **steepener**: receive 10Y (long), pay 2Y (short)
-- `-1` = **flattener**: pay 10Y (short), receive 2Y (long)
-- A steepener profits when (10Y − 2Y) widens.
+- `+1` = **steepener**: *pay* 10Y fixed (≡ short 10Y bond), *receive* 2Y fixed (≡ long 2Y bond)
+- `-1` = **flattener**: *receive* 10Y fixed (≡ long 10Y bond), *pay* 2Y fixed (≡ short 2Y bond)
+- A steepener profits when (10Y − 2Y) **widens** (10Y rises more than 2Y, or 2Y falls more than 10Y).
 
 **Mean-reversion logic.** When the signal z-score is high (slope too steep
 relative to fair value), we enter a flattener (pos = -1) to fade the deviation.
@@ -397,9 +397,17 @@ def dv01_per_unit_notional(tenor_years: float, yield_dec: float) -> float:
 
     DV01 ≈ A(T,y) × 1e-4   where   A(T,y) = (1 - (1+y)^{-T}) / y
     Source: CME Group, 'Swap Rate Curve Strategies with DSF futures', p.6.
+
+    Valid for y > -1. Uses the analytic y→0 limit (A → T) for |y| < 1e-8
+    to preserve accuracy on near-zero and mildly negative rates (EUR/CHF
+    during the negative-rate era).
     """
-    y = max(float(yield_dec), 1e-6)  # avoid div by zero on negative-rate edge
-    return (1.0 - (1.0 + y) ** (-tenor_years)) / y * 1e-4
+    y = float(yield_dec)
+    if abs(y) < 1e-8:
+        annuity = float(tenor_years)
+    else:
+        annuity = (1.0 - (1.0 + y) ** (-tenor_years)) / y
+    return annuity * 1e-4
 
 def compute_zscore(series: pd.Series, lookback: int) -> pd.Series:
     rm = series.rolling(lookback, min_periods=lookback // 2).mean()
@@ -451,33 +459,31 @@ def backtest(
         unit = "bp"
 
     elif pnl_mode == "dv01":
-        # True DV01-weighted spread trade.
-        # Notional_2Y is set so DV01_2Y == DV01_10Y, both recomputed daily.
+        # True DV01-weighted spread trade: both legs sized so DV01_2Y == DV01_10Y
+        # (the 2Y notional is rescaled daily so the trade is insensitive to
+        # parallel shifts).
         d2  = panel["rate_2Y"].apply(lambda y: dv01_per_unit_notional(2.0,  y))
         d10 = panel["rate_10Y"].apply(lambda y: dv01_per_unit_notional(10.0, y))
         notional_2y = notional_10y * (d10 / d2)
-        # P&L of receive-10Y leg: −Δr_10Y × notional × DV01_per_unit  (long bond ↔ pay rate)
-        # P&L of pay-2Y leg    : +Δr_2Y  × notional × DV01_per_unit
-        # Steepener (pos = +1): receive 10Y + pay 2Y
+
         dr2  = panel["rate_2Y"].diff()
         dr10 = panel["rate_10Y"].diff()
-        leg10 = -dr10 * notional_10y * d10 * BP_PER_UNIT  # express in $-per-bp consistency
-        leg2  = +dr2  * notional_2y  * d2  * BP_PER_UNIT
-        # Both legs are now in dollars per 1bp curve move ⇒ multiply by 1e4 to get $
-        # Simpler: rewrite directly in dollars
-        #leg10_dollar = -dr10 * notional_10y * d10 * 1e4
-        #leg2_dollar  = +dr2  * notional_2y  * d2  * 1e4
-        # Steepener (pos = +1): bet that (10Y - 2Y) widens
-        # → short 10Y bond (= receive 10Y rate), long 2Y bond (= pay 2Y rate)
-        # P&L of short 10Y = +dr10 × notional × DV01 (rate up = bond down = profit)
-        # P&L of long  2Y  = -dr2  × notional × DV01
+
+        # Steepener (pos = +1) in swap convention: pay 10Y fixed (≡ short 10Y
+        # bond, profits when r_10Y rises), receive 2Y fixed (≡ long 2Y bond,
+        # profits when r_2Y falls). So spread P&L per unit position is:
+        #     +dr_10Y × N_10Y × DV01_10Y  −  dr_2Y × N_2Y × DV01_2Y
+        # (factor 1e4 converts DV01_per_unit [$/bp/unit-notional] back to
+        # $/unit-rate because dr is stored in decimal form).
         leg10_dollar = +dr10 * notional_10y * d10 * 1e4
         leg2_dollar  = -dr2  * notional_2y  * d2  * 1e4
-        spread_pnl_dollar = (leg10_dollar + leg2_dollar)
+        spread_pnl_dollar = leg10_dollar + leg2_dollar
         pnl_per_step = pos_lag * spread_pnl_dollar
-        # TC: 0.5 bp per leg per direction flip; both legs trade together
+
+        # TC: tc_bp is the round-trip cost of a full spread flip (both legs),
+        # so no extra factor-of-2 is applied here.
         tc_dollar = pos_lag.diff().abs().fillna(0.0) * (
-            tc_bp * 1e-4 * (notional_10y * d10 + notional_2y * d2) * 1e4
+            tc_bp * (notional_10y * d10 + notional_2y * d2)
         )
         net = pnl_per_step - tc_dollar
         unit = "USD"
@@ -493,6 +499,7 @@ def backtest(
     }, index=panel.index)
     out.attrs["unit"] = unit
     return out
+
 ```
 
 ## 6 — Performance metrics
@@ -1264,18 +1271,18 @@ latent_shared[CURRENCIES[0]].tail(3)
   <tbody>
     <tr>
       <th>2026-01-13</th>
-      <td>0.300311</td>
-      <td>1.914511</td>
+      <td>0.300777</td>
+      <td>1.914474</td>
     </tr>
     <tr>
       <th>2026-01-14</th>
-      <td>0.296509</td>
-      <td>1.908829</td>
+      <td>0.296967</td>
+      <td>1.908791</td>
     </tr>
     <tr>
       <th>2026-01-15</th>
-      <td>0.291589</td>
-      <td>1.912555</td>
+      <td>0.292042</td>
+      <td>1.912517</td>
     </tr>
   </tbody>
 </table>
@@ -1346,14 +1353,14 @@ def backtest_pair_convergence(
          latent distance is sign-less; the slope spread has a sign and tells
          us which currency to flatten and which to steepen.)
 
-    Position:
-        +1 = bet on convergence when spread > +entry_z
-              → flatten A (slope_A is too high), steepen B
-        -1 = bet on convergence when spread < -entry_z
-              → steepen A, flatten B
+    Position (from build_positions, which already flips the sign of z):
+        -1 when z > +entry_z  (spread too high → flatten A, steepen B)
+        +1 when z < -entry_z  (spread too low  → steepen A, flatten B)
 
-    P&L (raw bp): pos × (-Δ(slope_A - slope_B))
-        the minus sign because we're betting the spread shrinks toward 0
+    P&L (raw bp): pos_lag * Δ(slope_A - slope_B)
+        Because `pos` already encodes the convergence bet (pos = -sign(z)
+        for large |z|), multiplying directly by Δspread yields positive P&L
+        on reversion — no extra sign flip needed.
 
     TC: 1 bp per direction flip (twice 0.5 bp because 4 legs total, 2 swaps per ccy)
     """
@@ -1363,10 +1370,9 @@ def backtest_pair_convergence(
     pos = build_positions(z, entry_z, exit_z)   # +1 / -1 / 0
     pos_lag = pos.shift(1).fillna(0.0)
 
-    # Convergence: P&L is positive when |spread| shrinks
-    # if pos = +1 (we bet spread shrinks from positive), profit = -spread_chg
-    # if pos = -1 (we bet spread shrinks from negative), profit = +spread_chg
-    pnl = -pos_lag * spread_chg
+    # Convergence: pos = -1 when spread is high; if spread reverts down,
+    # spread_chg < 0 and pnl = (-1)(-) = +.
+    pnl = pos_lag * spread_chg
     tc = pos_lag.diff().abs().fillna(0.0) * tc_bp
     net = pnl - tc
 
@@ -1397,21 +1403,21 @@ print(f"Pairs with Sharpe > 1: {(df_pairs['Sharpe'] > 1).sum()} / {len(df_pairs)
 ```
 
     Cross-currency convergence — top 10 pairs by OOS Sharpe (raw bp)
-             Sharpe   Total   MaxDD  HitRate  NumTrades
-    pair                                               
-    EUR-JPY    0.34   12.45  -40.05     0.49        162
-    GBP-USD   -1.22  -54.06  -76.06     0.44        182
-    DKK-JPY   -1.42  -59.11  -91.76     0.42        149
-    GBP-JPY   -1.43  -52.29  -83.62     0.41        145
-    JPY-USD   -1.44  -58.87  -89.28     0.41        108
-    EUR-USD   -2.00  -73.84  -95.45     0.45        134
-    AUD-USD   -2.24 -171.13 -174.67     0.41        149
-    AUD-CAD   -2.52 -176.01 -185.32     0.39        142
-    AUD-JPY   -2.70 -200.52 -211.96     0.43        144
-    DKK-USD   -3.29 -140.98 -157.45     0.34        140
+             Sharpe   Total  MaxDD  HitRate  NumTrades
+    pair                                              
+    CAD-USD    3.45  186.42 -15.39     0.50        113
+    CAD-GBP    3.44  236.18 -25.95     0.51        139
+    AUD-EUR    3.16  189.30 -30.31     0.53        122
+    CAD-DKK    3.13  180.36 -22.06     0.53        148
+    AUD-GBP    3.13  219.27 -26.38     0.55        130
+    DKK-GBP    2.99  121.21  -9.16     0.48        134
+    CAD-JPY    2.78  159.25 -19.30     0.54        128
+    AUD-DKK    2.53  152.81 -24.37     0.55        130
+    CAD-EUR    2.50  123.87 -23.45     0.55        132
+    DKK-EUR    2.05   71.30 -14.83     0.50        117
     
-    Mean Sharpe across 21 pairs: -3.15
-    Pairs with Sharpe > 1: 0 / 21
+    Mean Sharpe across 21 pairs: 1.87
+    Pairs with Sharpe > 1: 16 / 21
 
 
 
@@ -1440,11 +1446,11 @@ plt.show()
 ```
 
     Equal-weight cross-currency portfolio (OOS)
-      label    N       Total         Ann        Vol    Sharpe       MaxDD  \
-    0  PORT  208 -170.869452 -207.014913  28.223286 -7.334898 -169.971786   
+      label    N       Total         Ann        Vol    Sharpe     MaxDD  HitRate  \
+    0  PORT  208  105.059929  127.284144  27.837333  4.572426 -5.596524  0.57971   
     
-        HitRate NumTrades  
-    0  0.294686       207  
+      NumTrades  
+    0       207  
 
 
 
@@ -1538,12 +1544,12 @@ print(f"\nResidual std (bp) per tenor: {eps_usd.std().round(2).to_dict()}")
     OLS coefficients for USD (per tenor): dr_T ≈ a + b1·dz1 + b2·dz2
            alpha      b_z1      b_z2
     2  -0.000002 -0.029201 -0.014558
-    3   0.000001 -0.032635 -0.006974
-    5   0.000004 -0.029482 -0.003614
+    3   0.000001 -0.032634 -0.006974
+    5   0.000004 -0.029481 -0.003613
     10 -0.000007 -0.024591  0.016957
     15  0.000004 -0.015238  0.006038
     20 -0.000002 -0.019705  0.018044
-    30  0.000000 -0.018792  0.017306
+    30  0.000000 -0.018791  0.017306
     
     Residual std (bp) per tenor: {2: 4.61, 3: 4.89, 5: 4.83, 10: 3.28, 15: 4.72, 20: 2.31, 30: 2.23}
 
@@ -1561,10 +1567,18 @@ def backtest_tenor_residual(
     Signal: z-score of cumulative residuals (the residual is a daily change, so
             we cumsum to get a "level" on which mean-reversion makes sense).
 
-    Position +1 = long the tenor (= receive fixed at T)
-             -1 = short the tenor (= pay fixed at T)
+    Position (from build_positions, which gives pos = -sign(z) for |z|>entry):
+        -1 when z > +entry_z : cum_eps too high → expect reversion down →
+                               future dr_T < latent prediction; under the
+                               (average) assumption dz ≈ 0 this implies dr < 0,
+                               so the desired trade is LONG the tenor
+                               (receive fixed), profiting when r_T falls.
+        +1 when z < -entry_z : symmetric — SHORT the tenor (pay fixed).
 
-    P&L: pos_lag * (-dr_T)   in bp   (long bond gains when rate falls)
+    P&L (bp):  pnl = pos_lag * dr_T_bp
+        With the build_positions sign convention, pos = -1 should profit when
+        r_T falls (dr_T < 0): (-1)(negative) = positive ✓. The older formula
+        `pnl = -pos * dr` had an extra sign flip and traded the wrong way.
     """
     eps_bp, _ = pca_latent_residuals(ccy, TRAIN_CUTOFF)
     cum_eps = eps_bp[tenor].cumsum()
@@ -1574,7 +1588,8 @@ def backtest_tenor_residual(
     pos_lag = pos.shift(1).fillna(0.0)
 
     dr_T_bp = swap_aligned[ccy][tenor].diff() * BP_PER_UNIT
-    pnl = -pos_lag * dr_T_bp     # long bond ≡ pay fixed inverse, gain on rate down
+    # pos = -1 (cum_eps high, expect r_T to fall) * (dr < 0) → positive P&L
+    pnl = pos_lag * dr_T_bp
     tc  = pos_lag.diff().abs().fillna(0.0) * tc_bp
     net = pnl - tc
     return pd.DataFrame({
@@ -1601,22 +1616,8 @@ print(pivot)
 print(f"\nMean Sharpe: {df_tenor['Sharpe'].mean():.2f}")
 print(f"Best tenor: {df_tenor.groupby('tenor')['Sharpe'].mean().idxmax()} "
       f"(avg Sharpe {df_tenor.groupby('tenor')['Sharpe'].mean().max():.2f})")
+
 ```
-
-    Per-tenor residual mean-reversion — OOS Sharpe by (currency, tenor)
-    tenor       2     3     5     10    15    20    30
-    currency                                          
-    AUD      -3.29 -4.97  1.54  2.55 -4.38  0.21 -0.30
-    CAD      -0.13 -3.16 -0.52 -0.49 -4.30 -7.80 -2.57
-    DKK      -2.05 -4.94 -1.18 -3.16 -0.01 -0.99 -1.49
-    EUR      -0.17 -1.72 -0.94 -6.11 -3.25 -3.56  0.47
-    GBP      -0.15  0.14  0.28  0.09 -0.36 -0.60 -0.74
-    JPY      -0.57 -2.74  1.50  0.87 -3.50  0.93 -6.17
-    USD      -1.39  0.45  0.52  1.22 -1.18  0.74 -0.05
-    
-    Mean Sharpe: -1.38
-    Best tenor: 5 (avg Sharpe 0.17)
-
 
 ## D — Carry-aware P&L
 
@@ -1648,9 +1649,17 @@ def add_carry_to_backtest(
     """
     Augment a raw_bp backtest with daily carry on the 2s10s spread.
 
-    Daily carry of a steepener (+1):
+    Interpretation of the 'bp' unit. In raw_bp mode, 1 unit of position
+    represents a unit-DV01 2s10s spread: i.e. a notional size such that a 1bp
+    widening of (10Y - 2Y) yields 1bp of P&L. Under that normalisation, the
+    daily coupon accrual of a steepener (+1 = receive 2Y fixed, pay 10Y fixed)
+    per unit-DV01 is
+
         carry_bp = (r_2Y - r_10Y) * BP_PER_UNIT / 252
-    (negative when curve is upward-sloping, positive when inverted)
+
+    in bp/day, consistent with slope_chg_bp already being bp/day. On an
+    upward-sloping curve r_10Y > r_2Y, so the steepener carries negatively
+    (LOIM 2022); on an inverted curve it carries positively.
     """
     daily_carry_bp = (panel["rate_2Y"] - panel["rate_10Y"]) * BP_PER_UNIT / 252
     pos_lag = bt["position"].shift(1).fillna(0.0)
@@ -1676,20 +1685,8 @@ for ccy in CURRENCIES:
     s_yes = perf_stats(oos(bt_carr))["Sharpe"]
     ann_carry = bt_carr.loc[bt_carr.index > TRAIN_CUTOFF, "carry_bp"].sum() * (252 / 208)
     print(f"{ccy:<10}{s_no:>18.2f}{s_yes:>18.2f}{ann_carry:>16.1f} bp")
+
 ```
-
-    Effect of carry on CVAE_resid strategy (OOS, raw bp)
-    ----------------------------------------------------------------
-    Currency   Sharpe (no carry)  Sharpe (+ carry)      Avg carry/yr
-    ----------------------------------------------------------------
-    AUD                     3.77              3.85             5.5 bp
-    CAD                     2.79              2.81             1.6 bp
-    DKK                     2.72              2.17           -22.9 bp
-    EUR                     1.69              0.78           -21.2 bp
-    GBP                     0.10              0.03            -2.6 bp
-    JPY                     0.58              1.11            15.1 bp
-    USD                     0.18              0.18            -0.1 bp
-
 
 ## E — 2s5s10s butterfly with CVAE fair value
 

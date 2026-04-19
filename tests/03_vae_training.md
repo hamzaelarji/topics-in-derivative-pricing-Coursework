@@ -1094,21 +1094,6 @@ for ccy in CURRENCIES:
 ```
 
 
-    ---------------------------------------------------------------------------
-
-    NameError                                 Traceback (most recent call last)
-
-    Cell In[1], line 2
-          1 # Single-currency VAE — evaluate only on aligned dates for a fair comparison
-    ----> 2 for ccy in CURRENCIES:
-          3     aligned_dates = swap_aligned[ccy].index
-          4     full_dates    = single_ccy_data[ccy]["dates"]
-
-
-    NameError: name 'CURRENCIES' is not defined
-
-
-
 ```python
 # Multi-currency VAE (per-currency slices)
 offset = 0
