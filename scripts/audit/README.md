@@ -6,14 +6,17 @@ Standalone scripts that re-check NB1–NB4. Run from this folder with
 
 Data used:
 - `DATA_TAG=orig` reads `data/df_multi_unaligned.csv`, the dataset as shipped on `main`, before the fix.
-- `DATA_TAG=realigned` reads `data/df_multi.csv`, produced by NB1 with the §2b re-alignment.
+- `DATA_TAG=realigned` reads `data/df_multi.csv`, produced by NB1 with the §2b tenor re-alignment and the §2c EUR
+  sheet-offset fix. The audit numbers quoted in the top-level README were computed before §2c existed. §2c only
+  moves the whole EUR curve in time, so single-currency results are essentially unchanged; cross-currency results
+  are affected.
 
 `exp1`, `exp3` and `exp8*` reload the weights of the original (unaligned) NB3 run from
 `results/original_backup_2026-10-13/`. This folder is local only, because `results/` is not versioned.
 
 | Script | What it does | Runtime |
 |---|---|---|
-| `exp1_reproduce_saved.py` | Reloads `results/vae_results_extended.pkl` and checks the saved weights reproduce NB3's RMSE table and NB4's portfolio Sharpes exactly | seconds |
+| `exp1_reproduce_saved.py` | Reloads the original NB3 weights (`results/original_backup_2026-10-13/`) and checks the saved weights reproduce NB3's RMSE table and NB4's portfolio Sharpes exactly | seconds |
 | `exp3_diagnostics.py` | Autocorrelation and stale quotes, CVAE vs PCA/NS/naive benchmarks, execution-lag and cost sensitivity | seconds |
 | `realign.py` | Detects and undoes the row misalignment between tenor columns in `data/data_bloomberg.xlsx`, writing `out/df_multi_realigned.csv` | ~1 min |
 | `exp7_realigned_quick.py` | Cheap signals (PCA, NS, naive) on original vs realigned data | seconds |
