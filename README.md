@@ -54,13 +54,14 @@ The CVAE's out-of-sample RMSE depends on the seed: 4.9–7.6 bp across four runs
 | Signal | Sharpe, fixed HP | Sharpe, tuned HP |
 |---|---|---|
 | CVAE slope residual | 0.39 | 0.12 |
-| NS slope residual | 0.27 | 0.57 |
+| NS slope residual (λ = 0.5, chosen on the train window) | 0.53 | 0.25 |
 | Naive slope z-score | −0.09 | −0.03 |
 | CVAE z₂ | −2.40 | −1.89 |
 | 2s5s10s butterfly, CVAE residual (Ext. E) | 0.43 | — |
-| Cross-currency slope spread, 21 pairs (Ext. B) | 1.21 | — |
+| Ext. B1: cross-currency slope spread, 21 pairs (model-free) | 1.21 (0.46 without EUR pairs) | — |
+| Ext. B2: B1 gated by multi-VAE latent distance | −2.59 | — |
 
-With 208 days the standard error of a Sharpe ratio is about 1.1, so none of these differs significantly from zero. Adding carry (Ext. D) makes the CVAE strategy worse.
+With 208 days the standard error of a Sharpe ratio is about 1.1, so none of these differs significantly from zero. DV01-weighted P&L gives the same Sharpe as raw bp to within 0.05. Adding carry (Ext. D) makes the CVAE strategy worse. Gating the cross-currency trade on latent distance (B2) makes it worse, not better. B1's 1.21 comes mostly from the six EUR pairs, which are affected by the EUR timing offset described below.
 
 A stricter walk-forward test (`scripts/audit/exp5_walkforward.py`) re-fits the CVAE quarterly on an expanding window over 511 OOS days. The seed-ensemble Sharpe is **0.03**, with a block-bootstrap 95% CI of [−1.6, 1.4], and the break-even cost is about 0.5 bp per position change.
 
@@ -69,12 +70,17 @@ A stricter walk-forward test (`scripts/audit/exp5_walkforward.py`) re-fits the C
 ## Known limitations and open issues
 
 - **Short sample.** About 3 years of data versus 22 in the paper, and one train/test split.
-- **NS benchmark parametrisation.** NB2 chooses λ* = 0.5 in the `exp(−λτ)` form. NB3 and NB4 use `NelsonSiegel(lambda_param=1.5)` in the `exp(−τ/1.5)` form, which equals λ ≈ 0.67.
+- **EUR sheet timing offset.** NB1 re-aligns tenors *within* each sheet but cannot detect an offset of a whole sheet. Against USD, EUR level changes peak at a lag of −1 to −2 rows from mid-2023 onwards, while all other currencies peak at 0. Real rates cannot lead by days, so the EUR series appears to be misdated by 1–2 business days. This affects only cross-currency comparisons (NB4 Ext. B, B3 cell). A clean re-pull with a common date axis would fix it.
+- **NS benchmark parametrisation in NB3.** NB2 and NB4 use the `exp(−λτ)` form with λ = 0.5. NB3's in-sample comparison still uses `NelsonSiegel(lambda_param=1.5)` in the `exp(−τ/1.5)` form, which equals λ ≈ 0.67.
 - **Wilcoxon p-values in NB3** treat strongly autocorrelated daily RMSEs as independent, so they overstate significance.
 - **eNS/NSS λ often sits at the optimiser bounds** [0.05, 15] in NB2. For example, NSS λ₁ is at the lower bound on 9% of dates.
-- **NB4 metrics.** DV01-mode costs are twice the raw-mode costs (1 bp vs 0.5 bp per unit change). `NumTrades` counts days with non-zero P&L, not position changes, and `HitRate` is per day.
-- **Extension B** computes latent distances only for diagnostics. Its trading signal is the z-score of the slope spread between two currencies.
+- **Carry in NB4 Ext. D is a simplified approximation**: `(r₂ − r₁₀)/252` per unit of spread DV01. It ignores the floating legs and the 2Y/10Y notional ratio, and there is no roll-down.
 - **Training stability.** Single-seed VAE training is occasionally unstable: one multi-VAE run in the audit stalled on a plateau with a loss about 10× higher.
+
+NB4 conventions:
+- Transaction costs are charged per unit change of the spread position, in bp of the spread, identically in raw-bp and DV01 mode.
+- `NumTrades` counts position changes.
+- `HitRate` is the share of winning trades. `DayHitRate` is the share of winning days.
 
 ## Repository layout
 
@@ -82,7 +88,7 @@ A stricter walk-forward test (`scripts/audit/exp5_walkforward.py`) re-fits the C
 ├── 01_data_loading.ipynb      # load Bloomberg data, re-align tenor columns (§2b), clean, align dates
 ├── 02_nelson_siegel.ipynb     # NS / eNS / NSS benchmark + λ cross-validation
 ├── 03_vae_training.ipynb      # single/multi VAE, CVAE, train-only models (§13, §13b), AEMM variants
-├── 04_trading_signals.ipynb   # 2s10s strategies + extensions, signals from train-only models
+├── 04_trading_signals.ipynb   # 2s10s strategies + extensions B–E, signals from train-only models
 ├── data/
 │   ├── data_bloomberg.xlsx        # raw Bloomberg export
 │   ├── df_multi.csv               # produced by NB1 (re-aligned)
