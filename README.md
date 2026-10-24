@@ -10,6 +10,7 @@ Replication and extension of Sokol (2022), *"Autoencoder Market Models for Inter
 2. **Implements three AEMM variants** from Chapters 3–4 of the paper: forward rate, multi-factor short rate, and autoregressive P-measure.
 3. **Tests CVAE-driven trading strategies** on the 2s10s slope and the 2s5s10s butterfly, plus carry and cross-currency extensions (NB4).
 4. **Builds a full relative-value curve-arbitrage & anomaly-detection process** on the AEMM (NB5): monitoring, model-neutral trade construction, execution and regime-aware risk controls.
+5. **Asks whether the autoencoder residual is a tradable mispricing or a model error** (NB6): predictive power at 1–20 days against PCA and Nelson-Siegel, a carry/rolldown P&L decomposition and residual alpha, Markov-switching regimes, and reconstruction vs prediction training objectives.
 
 With clean data and no look-ahead, **no strategy shows a statistically significant out-of-sample edge**.
 
@@ -135,6 +136,40 @@ With 473 days the standard error of a Sharpe ratio is about 0.73, so nothing her
   - The drift detector and the cost-aware edge were added after an independent code review that had seen the 2025–26 model drift.
 
 
+## Research: is the autoencoder residual a tradable mispricing? (NB6)
+
+`06_rv_research.ipynb` uses the same timeline as NB5. Models are fitted on 2020–2023 and evaluated on 2024 → Oct 2026 (735 days, all out of sample).
+
+1. **Predictive power.** We compare residual signals (VAE, PCA-2, PCA-3, NS) against *hedged* future moves at 1, 5, 10 and 20 days:
+   - per tenor, the move net of level and slope;
+   - per package: DV01-neutral spreads, and butterflies neutral to level and slope.
+
+   The **immediate IC**, measured from the signal's own close, is +0.10 to +0.13. The **tradable IC**, measured from the fill one day later, is only **+0.02 to +0.03**, and the tradable hit rate is about 49–50%.
+   - About 75% of the apparent reversion happens on the next print, before a position can be filled.
+   - The VAE is no better than PCA or NS.
+2. **Portfolios with a full P&L decomposition.** The rates P&L is split into rates, carry, rolldown and costs:
+   - **carry** uses the actual floating index: overnight rates for OIS, 6M CIBOR/PRIBOR for DKK/CZK;
+   - **rolldown** comes from curve interpolation, including the 1Y tenor.
+
+   Gross (rates-only) Sharpe is about 0 for every model (VAE −0.02). After removing the known factor exposure, the residual alpha is −0.32 for the VAE (SE ≈ 0.6). Costs dominate the net result. Even at zero cost the net Sharpe is −0.3 to −0.6.
+3. **Regimes.** A Markov-switching model with switching variance is fitted on the VAE latent factors, using **filtered** probabilities only. The results run against the usual intuition:
+   - residuals revert *faster* in the high-volatility regime (half-life 36 days vs 69 days);
+   - the tradable IC is higher there;
+   - trading only in the low-volatility regime makes results worse.
+4. **Training objective.** The same encoder is trained on reconstruction, on prediction of 5- and 20-day moves, or on both (multitask):
+   - The prediction-trained model overfits: its OOS R² against a random walk is −4.0 at 5 days, and its tradable IC is negative.
+   - The multitask model reconstructs slightly better out of sample (8.3 vs 8.9 bp) but forecasts nothing (IC ≈ 0).
+   - The best forecaster is a plain ridge regression, with a tiny edge.
+
+**Answer.** On this sample the autoencoder residual behaves like **model error plus next-day quote noise, not a tradable mispricing**:
+- it is persistent, with a half-life of 40–70 days, which fits slow model drift;
+- the part that reverts quickly is not capturable;
+- it is no more informative than PCA or Nelson-Siegel residuals.
+
+Considered and left out:
+- **HJM / no-arbitrage constrained models:** a separate pricing project, with no alpha question.
+- **FX-hedged cross-currency trades:** already covered by NB4's Extension 2.
+
 ## Known limitations
 
 - **Sample length.** About 6 years of data versus 22 in the paper, and one train/test split.
@@ -159,6 +194,7 @@ NB4 conventions:
 ├── 03_vae_training.ipynb      # single/multi VAE, CVAE, train-only models (§13, §13b), AEMM variants
 ├── 04_trading_signals.ipynb   # 2s10s slope / butterfly strategies + carry and cross-currency extensions
 ├── 05_rv_anomaly_strategy.ipynb  # relative-value curve arbitrage & anomaly detection (NB5)
+├── 06_rv_research.ipynb          # is the AE residual a tradable mispricing? IC, P&L decomposition, regimes, objectives (NB6)
 ├── data/
 │   ├── bloomberg_swap_download_comlet.xlsx   # fresh Bloomberg pull (default source)
 │   ├── bloomberg_extras_*.xlsx                # overnight rates, IBOR fixings (not used yet)
@@ -183,7 +219,7 @@ NB4 conventions:
    pip install numpy pandas scipy matplotlib torch openpyxl
    ```
 2. **The Bloomberg Excel file** is `data/bloomberg_swap_download_comlet.xlsx`.
-3. **Run the notebooks in order**: NB1 → NB2 → NB3 → NB4 → NB5. Each notebook saves its outputs into `results/` and `figures/` for the next one. NB3 takes about 40 minutes on a laptop CPU, and NB5 about 10 (it trains its own models on data up to 2023).
+3. **Run the notebooks in order**: NB1 → NB2 → NB3 → NB4 → NB5 → NB6. Each notebook saves its outputs into `results/` and `figures/` for the next one. NB3 takes about 40 minutes on a laptop CPU, NB5 about 10 (it trains its own models on data up to 2023), and NB6 about 6 (it reuses NB5's CVAE and trains two more models).
 4. **Optional:** run the audit scripts in `scripts/audit/` (see its README).
 
 ## References
