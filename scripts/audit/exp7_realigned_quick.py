@@ -16,7 +16,7 @@ def pca_fv(df, cutoff, k):
     return pd.DataFrame((df - mu).values @ V @ V.T + mu.values, index=df.index, columns=TARGET_TENORS)
 
 is_oos = lambda i: i > TRAIN_CUTOFF
-for label, path in [("ORIGINAL", ROOT/"data"/"df_multi_unaligned.csv"), ("RE-ALIGNED", ROOT/"data"/"df_multi.csv")]:
+for label, path in [("ORIGINAL", ROOT/"data"/"df_multi_unaligned.csv"), ("RE-ALIGNED", ROOT/"data"/"df_multi_repaired_2023_2026.csv")]:
     sw = load(path)
     rows = []
     for name in ["PCA-2", "PCA-3", "NS λ=0.5", "Naive"]:

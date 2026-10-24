@@ -4,7 +4,7 @@ import numpy as np, pandas as pd
 import realign as R
 from common import *
 
-ref = pd.read_csv(ROOT/"data"/"df_multi.csv", parse_dates=["Date"])
+ref = pd.read_csv(ROOT/"data"/"df_multi_repaired_2023_2026.csv", parse_dates=["Date"])
 dates = pd.DatetimeIndex(sorted(ref["Date"].unique()))
 def pca_fv(df, k):
     tr = df[df.index <= TRAIN_CUTOFF]; mu = tr.mean()

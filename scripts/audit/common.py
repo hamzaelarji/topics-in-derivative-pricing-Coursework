@@ -32,12 +32,12 @@ EXCLUDE = {"CHF"}
 
 # ── data ────────────────────────────────────────────────────────────────
 import os
-DATA_TAG = os.environ.get("DATA_TAG", "orig")  # "orig" = data/df_multi_unaligned.csv (as shipped on main), "realigned" = data/df_multi.csv (NB1 with §2b)
+DATA_TAG = os.environ.get("DATA_TAG", "orig")  # "orig" = data/df_multi_unaligned.csv, "realigned" = data/df_multi_repaired_2023_2026.csv (NB1 §2b+§2c on the original export)
 
 
 def load_swaps(tag: str = None) -> Dict[str, pd.DataFrame]:
     tag = tag or DATA_TAG
-    path = ROOT / "data" / ("df_multi_unaligned.csv" if tag == "orig" else "df_multi.csv")
+    path = ROOT / "data" / ("df_multi_unaligned.csv" if tag == "orig" else "df_multi_repaired_2023_2026.csv")
     df_long = pd.read_csv(path, parse_dates=["Date"])
     df_long = df_long[~df_long["currency"].isin(EXCLUDE)]
     out = {}
