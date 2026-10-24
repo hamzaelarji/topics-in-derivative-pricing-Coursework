@@ -6,27 +6,30 @@ Replication and extension of Sokol (2022), *"Autoencoder Market Models for Inter
 
 ## What this project does
 
-1. **Replicates Sokol's core empirical claim** in-sample: a 2D Conditional VAE (CVAE) reconstructs OIS swap curves more accurately than the 3D Nelson-Siegel (NS) basis in 5 of 7 currencies (not CHF or JPY). Out of sample, the VAEs do **not** beat NS.
+1. **Replicates Sokol's core empirical claim** in-sample on 9 of his 13 currencies: a 2D Conditional VAE (CVAE), with the paper's post-processing step, reconstructs swap curves more accurately than the 3D Nelson-Siegel (NS) basis in 7 of 9 currencies. The two exceptions (CZK, GBP) are within 0.2 bp. Out of sample, the VAEs do **not** beat NS.
 2. **Implements three AEMM variants** from Chapters 3–4 of the paper: forward rate, multi-factor short rate, and autoregressive P-measure.
-3. **Tests CVAE-driven trading strategies** on the 2s10s slope and the 2s5s10s butterfly, plus carry and cross-currency extensions. With clean data and no look-ahead, **none shows a statistically significant out-of-sample edge**.
+3. **Tests CVAE-driven trading strategies** on the 2s10s slope and the 2s5s10s butterfly, plus carry and cross-currency extensions (NB4).
+4. **Builds a full relative-value curve-arbitrage & anomaly-detection process** on the AEMM (NB5): monitoring, model-neutral trade construction, execution and regime-aware risk controls.
+
+With clean data and no look-ahead, **no strategy shows a statistically significant out-of-sample edge**.
 
 ## Data
 
 - **Source:** fresh Bloomberg pull, `data/bloomberg_swap_download_comlet.xlsx`. Every ticker shares one weekday calendar, so the columns are aligned by construction.
-- **7 currencies, current OIS benchmarks:**
-  - USD SOFR (`USOSFR`)
-  - EUR €STR (`EESWE`)
-  - GBP SONIA (`BPSWS`)
-  - JPY TONA (`JYSO`)
-  - AUD AONIA (`ADSO`)
-  - CAD CORRA (`CDSO`)
-  - CHF SARON (`SFSNT`)
-
-  DKK is not used because `DKSW` is a CIBOR swap, not an OIS.
+- **9 currencies** (the 9 of Sokol's 13 that are available in the pull):
+  - **OIS swaps (current benchmarks):**
+    - USD SOFR (`USOSFR`)
+    - EUR €STR (`EESWE`)
+    - GBP SONIA (`BPSWS`)
+    - JPY TONA (`JYSO`)
+    - AUD AONIA (`ADSO`)
+    - CAD CORRA (`CDSO`)
+    - CHF SARON (`SFSNT`)
+  - **IBOR swaps:** DKK (`DKSW`, vs CIBOR) and CZK (`CKSW`, vs PRIBOR). Like Sokol, we mix OIS and IBOR swaps.
 - **7 tenors:** 2, 3, 5, 10, 15, 20, 30Y.
 - **Window:** daily, 9 Sep 2020 → 23 Oct 2026 (1,598 business days). This is the longest window where every currency and tenor is present. The start is set by CAD 15–30Y CORRA swaps; holiday gaps of up to 5 days are forward-filled, which covers the Japanese New Year.
-- **Train/test split:** at 31 Dec 2024. 1,125 train days and 473 test days (about 70/30).
-- **Same-day correlation of daily changes:** 0.85–0.99 between 2Y and 3Y. Every currency lines up with USD at lag 0, except JPY and AUD, which sometimes react to US moves one day later because they close before New York.
+- **Train/test split (NB3/NB4):** at 31 Dec 2024. 1,125 train days and 473 test days (about 70/30).
+- **Same-day correlation of daily changes:** 0.85–0.99 between 2Y and 3Y in every currency. Every currency lines up with USD at lag 0, except JPY and AUD, which sometimes react to US moves one day later because they close before New York.
 - The Excel file also contains IBOR-swap histories back to 2000 and overnight rates (`data/bloomberg_extras_*.xlsx`), which are not used yet.
 
 ### The first export, and why the results changed
@@ -42,49 +45,105 @@ The misalignment created spurious next-day predictability. On the original expor
 
 ## Key results (clean data, NB2–NB4)
 
-**Reconstruction, in-sample.** Models are trained on all 1,598 days. Values are mean RMSE per currency (range across the 7 currencies).
+**Reconstruction, in-sample.** Models are trained on all 1,598 days. Values are mean RMSE per currency (range across the 9 currencies).
 
 | Model | Latent dim | Mean RMSE (bp) |
 |---|---|---|
-| Nelson-Siegel, λ = 0.05 (NB2 cross-validation) | 3 | 2.09–7.94 |
-| Single-currency VAE | 2 | 3.10–9.55 |
-| Multi-currency VAE | 2 | 3.61–7.67 (beats NS in 4/7 currencies) |
-| **Multi-currency CVAE** | 2 | **2.63–3.35** (beats NS in 5/7; not CHF, JPY) |
-| eNS (λ re-fitted per date) | 3 + λ | 2.92 pooled |
-| Nelson-Siegel-Svensson | 4 | 0.45 pooled |
+| Nelson-Siegel, λ = 0.45 (NB2 cross-validation) | 3 | 2.34–9.07 |
+| Single-currency VAE | 2 | 2.55–6.02 |
+| Multi-currency VAE (+ post-processing) | 2 | 3.89–7.33 (beats NS in 5/9 currencies) |
+| **Multi-currency CVAE (+ post-processing)** | 2 | **2.53–4.47** (beats NS in 7/9; not CZK 4.47 vs 4.35, GBP 2.53 vs 2.34) |
+| eNS (λ re-fitted per date) | 3 + λ | 2.94 pooled |
+| Nelson-Siegel-Svensson | 4 | 0.56 pooled |
+
+The per-currency table is in NB3 ("Per-currency replication check"). The two currencies where NS wins are close calls that depend on the training seed: an earlier run with a different seed had the CVAE winning in 8/9.
 
 **Reconstruction, out of sample.** Models are trained on dates up to 31 Dec 2024 and evaluated on the 473 test days.
 
 | Model | In-sample RMSE (bp) | Out-of-sample RMSE (bp) |
 |---|---|---|
-| CVAE (NB3 §13b) | 2.90 | 7.79 |
-| Multi-VAE (NB3 §13) | 4.79 | 13.28 |
-| NS, λ = 0.05, fitted per date | 5.98 | 3.16 |
+| CVAE (NB3 §13b) | 3.12 | 7.50 |
+| Multi-VAE (NB3 §13) | 5.53 | 10.18 |
+| NS, λ = 0.45, fitted per date | 5.67 | 4.45 |
 
-With about four years of training data, the autoencoders do not generalise to 2025–2026 curve shapes. Per-date NS does not need training and is much more accurate out of sample.
+With about four years of training data, the autoencoders do not generalise well to 2025–2026 curve shapes. Per-date NS does not need training and is much more accurate out of sample.
 
-**Trading.** Equal-weight portfolios across 7 currencies, OOS (473 days), raw-bp P&L, 0.5 bp per position change (1 bp for the butterfly), signals from train-only models (NB4).
+**Trading (NB4).** Equal-weight portfolios across 9 currencies, OOS (473 days), raw-bp P&L, 0.5 bp per position change (1 bp for the butterfly), signals from train-only models.
 
 | Strategy | OOS Sharpe |
 |---|---|
-| A: CVAE slope residual, fixed / tuned HP | 0.34 / 0.77 |
-| NS slope residual | −0.92 |
-| Naive slope z-score | −0.39 |
-| B: CVAE butterfly residual | −0.25 |
-| NS / naive butterfly | −2.10 / −0.01 |
-| Ext. 2: cross-currency, all 21 pairs | 0.29 |
-| Ext. 2: close / far pairs (train-window latent distance) | 0.77 / −0.23 |
+| A: CVAE slope residual, fixed / tuned HP | 0.33 / 0.71 |
+| NS slope residual | −1.16 |
+| Naive slope z-score | −0.49 |
+| B: CVAE butterfly residual | −0.28 |
+| NS / naive butterfly | −1.85 / 0.16 |
+| Ext. 2: cross-currency, all 36 pairs | 0.41 |
+| Ext. 2: close / far pairs (train-window latent distance) | 1.14 / −0.26 |
 
-With 473 days the standard error of a Sharpe ratio is about 0.73, so nothing here differs significantly from zero. The best numbers come after choosing among many variants. The CVAE ranks above the NS and naive benchmarks, but by less than one standard error. Carry dominates the slope trade: in Extension 1 the average carry Sharpe is 0.80 against 0.04 for the signal.
+With 473 days the standard error of a Sharpe ratio is about 0.73, so nothing here differs significantly from zero, and the best numbers come after choosing among many variants. In Extension 1 the average carry Sharpe (0.17) is comparable to the signal's (0.10).
+
+## Relative-value curve arbitrage & anomaly detection (NB5)
+
+`05_rv_anomaly_strategy.ipynb` turns the AEMM into an institutional RV process.
+
+**Timeline (no look-ahead):** the CVAE and multi-VAE are fitted on data up to 2023. 2024 is a calibration year with no trading. The strategy trades 2025–2026, the same 473 days as NB4. Every threshold is a trailing statistic of out-of-sample model outputs.
+
+1. **Signal generation & monitoring**
+   - The fair value S' is the CVAE reconstruction with Sokol's post-processing gradient descent (§2.3.1). The residual is r = S − S' per tenor, and D_L2 is reported as an RMSE in bp.
+   - D_L2 is ranked against its trailing 250-day out-of-sample history: the 90th percentile marks a dislocation and the 99th an extreme.
+   - A **drift ratio** compares the 20-day D_L2 with its 2024 level.
+   - Latent **zones** come from the multi-VAE's shared space, following Sokol §2.3.3 and Fig. 7:
+     - Zone 1: inside the currency's own historical envelope.
+     - Zone 2: inside another currency's envelope.
+     - Zone 3: outside every envelope, i.e. extrapolation ("terra incognita").
+2. **Residual decomposition & trade construction**
+   - Per-tenor residual z-scores and a concentration measure show where the curve leaves the manifold.
+   - The residual is projected on 8 butterflies and 4 steepeners/flatteners.
+   - Butterfly weights are **model-neutral**: they solve J_legsᵀ w = 0, where J is the decoder Jacobian, so they are immune to moves along the manifold. 79% of flies are well-conditioned; the rest use 50/50 weights.
+3. **Mean reversion & execution**
+   - Enter the most dislocated package (|z| ≥ 2, z and dislocation of the same sign, dislocation ≥ 2× round-trip cost) when the curve is flagged.
+   - Fade the dislocation. Fill at the next close, size each trade to 1 bp/day of volatility, and pay 0.25 bp per leg per unit DV01 each way.
+   - Take profit at |z| ≤ 0.5; time stop at 20 days.
+4. **Risk controls**
+   - Each currency-day is classified as one of three regimes:
+
+     | Class | Conditions | Action |
+     |---|---|---|
+     | **Liquidity dislocation** | Zone 1, localised residual | full size |
+     | **Regime shift** | Zone 3, or 5 extreme days, or drift ratio > 2, or a broad multi-currency distortion | no entries, exit, 20-day cooldown, retraining flag |
+     | **Uncertain** | anything else | half size |
+
+   - Per-trade stops: a signal stop (|z| ≥ 4) and a P&L stop (loss > dislocation).
+   - Portfolio stop: a 15 bp-risk drawdown from the high-water mark flattens the book.
+
+**Results.** Trading window 2025–2026, 9 currencies, Sharpe SE ≈ 0.73.
+
+| Variant | Sharpe | Total (bp-risk) | Trades |
+|---|---|---|---|
+| AEMM RV, full | −1.70 | −31.6 | 34 |
+| AEMM RV, no risk controls | −2.72 | −206.1 | 95 |
+| Classical engine (NS fair value, 50/50 flies, no zones) | −1.06 | −30.6 | 50 |
+| AEMM RV, same-close execution | −1.02 | −21.9 | 33 |
+| AEMM RV, zero costs | −0.56 | −11.0 | 36 |
+
+- **Out of sample the model drifts.** Mean D_L2 rises from 2–5 bp in the fit window to 6–18 bp in 2025–26. The regime classifier stands aside on 49% of currency-days.
+- **The risk controls work as intended:** they cut the loss from −206 to −32 bp-risk units.
+- **The dislocations do not mean-revert in price.** Even with zero costs the strategy loses, and it does not beat the classical engine. Against a drifting model, a residual can close because the fair value moves rather than the market.
+- **The framework is the deliverable; there is no alpha on this sample.** The natural next step is the governance loop the regime flags call for: periodic walk-forward retraining.
+- **Caveats:**
+  - The multi-VAE latent space is close to one-dimensional (corr(z₁, z₂) ≈ 0.98 for most currencies), so the zone map is coarse.
+  - The drift detector and the cost-aware edge were added after an independent code review that had seen the 2025–26 model drift.
+
 
 ## Known limitations
 
 - **Sample length.** About 6 years of data versus 22 in the paper, and one train/test split.
 - **Data before the benchmark launches.** SOFR and €STR swap histories before their launch (2018/2019) are Bloomberg back-fills. They lie outside the window used here.
 - **Wilcoxon p-values in NB3** treat strongly autocorrelated daily RMSEs as independent, so they overstate significance.
-- **NS λ.** The cross-validation curve is flat and has two local minima (λ ≈ 0.05 and ≈ 0.5). NB2 picks 0.05 on the full sample; NB4 re-selects λ on the train window only and gets 0.5.
+- **NS λ.** The cross-validation curve is flat and can have two local minima (around 0.05 and 0.5). With 9 currencies, NB2 picks λ = 0.45 on the full sample, and NB4/NB5 re-select λ on their training windows only (0.45 in both).
 - **Carry (NB4 Ext. 1)** is a simplified approximation, `(r₂ − r₁₀)/252` per unit of spread DV01, with no floating legs or roll-down.
-- **Single-seed training.** VAE training is seed-dependent and occasionally stalls on a plateau (`scripts/audit/exp4_seed_analysis.py`).
+- **Training stability.** VAE training is seed-dependent and can stall on a plateau: a single-currency VAE once reached 114 bp RMSE. NB3 now retries a stalled single-currency VAE with another seed (up to 3 attempts) and re-seeds before each multi-currency model, so results no longer depend on cell order. Close per-currency comparisons with NS can still flip with the seed (`scripts/audit/exp4_seed_analysis.py`).
+- **Latent space.** The multi-VAE's two latent coordinates are highly correlated (≈ 0.98 for most currencies), so the latent "world map" and NB5's zones are close to one-dimensional.
 - **Stale commentary.** Some interpretive commentary in NB2/NB3 was written for the first export; those cells are flagged with a warning note.
 
 NB4 conventions:
@@ -98,7 +157,8 @@ NB4 conventions:
 ├── 01_data_loading.ipynb      # load Bloomberg data, alignment checks (§2b/§2c repair the first export), clean
 ├── 02_nelson_siegel.ipynb     # NS / eNS / NSS benchmark + λ cross-validation
 ├── 03_vae_training.ipynb      # single/multi VAE, CVAE, train-only models (§13, §13b), AEMM variants
-├── 04_trading_signals.ipynb   # 2s10s strategies + extensions B–E, signals from train-only models
+├── 04_trading_signals.ipynb   # 2s10s slope / butterfly strategies + carry and cross-currency extensions
+├── 05_rv_anomaly_strategy.ipynb  # relative-value curve arbitrage & anomaly detection (NB5)
 ├── data/
 │   ├── bloomberg_swap_download_comlet.xlsx   # fresh Bloomberg pull (default source)
 │   ├── bloomberg_extras_*.xlsx                # overnight rates, IBOR fixings (not used yet)
@@ -123,7 +183,7 @@ NB4 conventions:
    pip install numpy pandas scipy matplotlib torch openpyxl
    ```
 2. **The Bloomberg Excel file** is `data/bloomberg_swap_download_comlet.xlsx`.
-3. **Run the notebooks in order**: NB1 → NB2 → NB3 → NB4. Each notebook saves its outputs into `results/` and `figures/` for the next one. NB3 takes about 35 minutes on a laptop CPU.
+3. **Run the notebooks in order**: NB1 → NB2 → NB3 → NB4 → NB5. Each notebook saves its outputs into `results/` and `figures/` for the next one. NB3 takes about 40 minutes on a laptop CPU, and NB5 about 10 (it trains its own models on data up to 2023).
 4. **Optional:** run the audit scripts in `scripts/audit/` (see its README).
 
 ## References
